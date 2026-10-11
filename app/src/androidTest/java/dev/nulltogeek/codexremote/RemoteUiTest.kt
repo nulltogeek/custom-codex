@@ -154,6 +154,20 @@ class RemoteUiTest {
             put("longDraftComposerHeightDp", compose.onNodeWithTag("chat-composer").fetchSemanticsNode().boundsInRoot.height / density)
         }.toString())
     }
+
+    @Test fun stopControlSitsBesideSendOnlyWhileWorkIsActive() {
+        val state = mutableStateOf(sample().copy(selectedChat = Chat("stop", "Running chat", "", "", "active")))
+        render(state, narrow = true)
+        compose.onNodeWithContentDescription("Stop").assertIsDisplayed().assertIsEnabled()
+        val stop = compose.onNodeWithTag("stop-work").fetchSemanticsNode().boundsInRoot
+        val send = compose.onNodeWithTag("send-message").fetchSemanticsNode().boundsInRoot
+        assertEquals(stop.bottom, send.bottom, 1f)
+        assertEquals(stop.right, send.left, 1f)
+        compose.runOnIdle { state.value = state.value.copy(connection = "Offline") }
+        compose.onNodeWithContentDescription("Stop").assertIsNotEnabled()
+        compose.runOnIdle { state.value = state.value.copy(selectedChat = state.value.selectedChat?.copy(status = "idle")) }
+        compose.onNodeWithContentDescription("Stop").assertDoesNotExist()
+    }
     @Test fun compactProjectRowsKeepAllFolderPathsAvailable() {
         val roots = listOf("/workspace/a/very/long/project/path", "/workspace/second-folder")
         val state = mutableStateOf(sample().copy(page = "projects", projects = listOf(Project("p1", "Project 1", roots))))

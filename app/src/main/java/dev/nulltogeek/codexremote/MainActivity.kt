@@ -375,7 +375,6 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 state.lastTurnStatus == "interrupted" -> "Stopped"
                 else -> "Ready"
             }, style = MaterialTheme.typography.labelSmall)
-            Spacer(Modifier.weight(1f)); if (active) TextButton(onClick = { vm.interrupt() }, enabled = state.connection == "Connected") { Icon(Icons.Outlined.Stop, null, Modifier.size(16.dp)); Text("Stop") }
         }
         ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval, loadImage = vm::attachmentImage)
         ChatComposer(state, vm, onPick = { picker.launch(it) })

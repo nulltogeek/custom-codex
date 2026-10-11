@@ -61,7 +61,11 @@ import kotlinx.coroutines.withContext
                                 input()
                             }
                         })
-                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    if (state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty()) IconButton(
+                        onClick = { vm.interrupt() }, enabled = state.connection == "Connected" && !state.loading,
+                        modifier = Modifier.size(48.dp).testTag("stop-work")
+                    ) { Icon(Icons.Outlined.Stop, "Stop", Modifier.size(24.dp), tint = MaterialTheme.colorScheme.error) }
+                    Box(Modifier.size(48.dp).testTag("send-message"), contentAlignment = Alignment.Center) {
                         FilledIconButton(onClick = { vm.send() },
                             enabled = (state.draft.isNotBlank() || state.attachments.isNotEmpty()) && state.attachments.all { it.readyToSend } && canAttach && !state.uncertainSend,
                             modifier = Modifier.size(40.dp)) {
