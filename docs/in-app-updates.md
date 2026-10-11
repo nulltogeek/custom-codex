@@ -1,0 +1,67 @@
+# In-app APK updates
+
+APK 0.4.0 introduced in-app updates; 0.4.1 extends the download deadline for slow VPN links. Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing 0.4.0 release users can use its updater to install 0.4.1. Future releases can be downloaded and installed from **Settings → App updates**.
+
+## On the phone
+
+1. Connect WireGuard and sign in to `https://codex.geeksun.ir` as `nulltogeek`. The app checks for an update when it connects, at most once every six hours during the current app session. You can also tap **Check for updates** in Settings.
+2. Review the version, release notes and download size, then tap **Download**. Keep the app open while downloading. A failed download can be retried; an incomplete file is never offered to the installer.
+3. Tap **Install update** after verification. Android may ask you to allow Codex Remote to install apps; enable that permission and return. Then confirm the update in Android's installer. The APK uses the same application ID and signing key, so a normal update retains your app data.
+
+The app checks SHA-256, size, package name, version, minimum Android version and the installed signing certificates. It verifies the cached file again before opening the installer. The non-exported FileProvider shares only the update-cache directory through a temporary read grant. Installation stays under Android's normal user confirmation.
+
+Downloads use the existing authenticated HTTPS/WireGuard connection. The current client allows 15 minutes per download and times out a stalled read after 30 seconds. Session credentials stay in request headers, and APK downloads reject redirects. Release and debug APKs use separate update channels and application IDs. Check/download errors are shown in the update section without interrupting a chat. APK availability is independent of model-provider authentication.
+
+## Publish the next release
+
+Increase `versionCode` and `versionName` in `app/build.gradle.kts` using `vim`, retain the signing key, and add `docs/release-notes/<version>.txt`. Then run:
+
+```bash
+CODEX_GOOGLE_CDN=1 ./scripts/build-android.sh
+```
+
+The build script runs Android tests/lint, builds debug/release APKs, copies the delivery artifacts and publishes updates when the matching release-notes file exists. If notes are missing it builds the APKs but reports that publishing is still required. An explicit notes file can also be supplied as the build script's first argument.
+
+To publish already-built APKs:
+
+```bash
+node scripts/publish-app-update.mjs docs/release-notes/0.4.1.txt
+```
+
+Publishing verifies both APK signatures and actual package/version/minimum-SDK metadata using Android build-tools. It writes immutable APKs named by their SHA-256 and replaces each channel's manifest atomically. Future APK publications need no backend restart. The first updater deployment restarts the idle service to add these routes; that restart invalidates existing app login sessions.
+
+The default publication directory is the repository's ignored `artifacts/updates/`. `CODEX_APP_UPDATE_DIRECTORY` can select another directory, but it must be configured identically for the server and publisher. `ANDROID_HOME`/`ANDROID_SDK_ROOT` select the publishing tools; the fallback is `.downloads/android-sdk`, build-tools 35.0.0. `CODEX_ANDROID_BUILD_TOOLS` can point directly to another compatible build-tools directory.
+
+The authenticated routes are `GET /v1/app-update?channel=release|debug` and `GET /v1/app-update/apk/<sha256>.apk`. Nginx forwards both through the existing Codex vhost. There is no public unauthenticated APK endpoint or token in a download URL.
+
+Verify the published proxy path from this Linux machine:
+
+```bash
+node scripts/verify-app-update.mjs https://codex.geeksun.ir --local
+```
+
+This reads the existing private login locally and downloads both channels, checking authentication, byte counts, SHA-256 and agreement with published metadata. It does not print passwords or sessions.
+
+## Initial 0.4.0 verification on October 11, 2026
+
+- `npm run check` and `npm test`: all 36 backend tests passed, including update authentication, metadata validation, binary streaming, channel separation, invalid paths and APK symlink rejection.
+- `./gradlew --offline --no-daemon -PcodexGoogleCdn=true :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest`: succeeded; all 36 JVM tests passed and lint reported no issues. Tests cover bounded downloads, incomplete/altered bytes, checksum validation, incompatible metadata, redirects and expired sessions. Logs: `artifacts/v0.4-backend-tests.txt` and `artifacts/v0.4-android-build.txt`.
+- Both APK signatures and actual package/version/minimum-SDK metadata passed publication checks. The release signing certificate matched 0.3.0. Delivered APK checksums passed. Debug/release 0.4.0 APKs installed over the existing emulator packages. The previous delivery APKs are preserved in `artifacts/v0.3.0/`.
+- Four Android 11 emulator checks passed in 227.111 seconds: dark/light/settings screens, update controls and progress, native authenticated APK download/signing identity/FileProvider validation, and native login/reconnect/sign-out. `artifacts/v0.4-android-instrumentation.txt` records the run.
+- The installer check was strengthened after its first capture showed staging. Its separate rerun passed in 76.178 seconds: Android finished parsing the APK and displayed an enabled **Install** confirmation button. The test cancelled there. See `artifacts/v0.4-installer-confirmation.txt` and `artifacts/screenshots/v0.4.0/android-update-installer.png`. The update-settings capture uses a future-version fixture; it does not announce a real 0.5.0 release. Temporary emulator install permission was restored to its original default afterward.
+- Both complete APK downloads passed on the temporary real backend, including size and SHA-256 (`artifacts/v0.4-update-local.json`). The deployed service was restarted only after confirming zero active chats and zero pending approvals; one `systemError` chat was correctly classified separately from running work (`artifacts/v0.4-service-idle.json`).
+- Post-deployment HTTPS/WSS verification passed for authentication, complete local inventory (8 models, 15 projects, 35 active catalogue entries and 96 archived entries), shared events, reconnect and session revocation (`artifacts/v0.4-proxy-verification.json`). The release APK also passed a complete authenticated HTTPS download/checksum check through `codex.geeksun.ir`.
+
+The temporary test backend was closed. The deployed user service remains active. Physical-phone source-permission prompts and completed interactive installation remain unverified; the emulator installer check intentionally stops before confirmation. Model-provider HTTP 401 from the earlier task is independent of APK updates and was not re-tested here.
+
+## Current 0.4.1 verification
+
+The 60 MB debug transfer exposed an overly short download deadline: the proxy check timed out after three minutes, and the five-minute retry reached 56,341,592 of 60,386,031 bytes before timing out. This was a progressing transfer, so 0.4.1 extends the client/verifier deadline to 15 minutes while retaining the client's 30-second stalled-read timeout. The release APK passed both earlier checks.
+
+The 0.4.1 rebuild passed all 36 JVM tests, Android lint with no issues, and debug/release/instrumentation compilation (`artifacts/v0.4.1-android-build.txt`). Publication verified both signed APKs and their actual package/version/minimum-SDK metadata. Delivered checksums passed; the release signing identity matched 0.4.0. The release installed successfully over the existing emulator package (`artifacts/v0.4.1-release-install.txt`). Version code is 5; the 0.4.0 delivery APKs are preserved in `artifacts/v0.4.0/`.
+
+The newer 0.4.1 debug APK was downloaded and verified against the emulator's installed 0.4.0 signing identity. Android accepted it as an update and displayed an enabled Install confirmation button; the test cancelled there. The targeted check passed in 76.663 seconds (`artifacts/v0.4.1-installer-confirmation.txt`). Its capture is `artifacts/screenshots/v0.4.0/android-update-installer-0.4.1.png`. The temporary install permission was restored afterward.
+
+`node scripts/verify-app-update.mjs https://codex.geeksun.ir --local` passed for both channels: complete authenticated downloads, actual sizes (release 2,680,590 bytes; debug 59,614,133 bytes), SHA-256, matching published metadata, and rejection of unauthorized/browser-Origin requests. See `artifacts/v0.4.1-update-proxy.json`. This publication required no second service restart. The temporary test backend was closed and the deployed service remained active.
+
+The separate model-provider HTTP 401 was subsequently repaired on October 11. Real text replies and a follow-up pass through the deployed endpoint; see [the authentication repair](local-wireguard-deployment.md#provider-authentication-repaired-on-october-11-2026). That service restart requires fresh phone login. It does not require another APK update.

@@ -1,0 +1,10 @@
+node_modules/
+.runtime/
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.jks
+*.keystore
+.downloads/
+artifacts/

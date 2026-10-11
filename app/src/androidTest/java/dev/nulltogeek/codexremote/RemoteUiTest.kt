@@ -1,0 +1,220 @@
+package dev.nulltogeek.codexremote
+
+import android.app.Application
+import android.graphics.Bitmap
+import android.os.Handler
+import android.os.HandlerThread
+import android.view.FrameMetrics
+import androidx.activity.compose.setContent
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.serialization.json.*
+import org.junit.Assert.*
+import org.junit.Rule
+import org.junit.Test
+import org.junit.Assume.assumeTrue
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import java.io.File
+import java.util.concurrent.CopyOnWriteArrayList
+
+class RemoteUiTest {
+    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    private fun sample() = ScreenState(signedIn = true, username = "owner", connection = "Connected", host = "Linux workstation", theme = "dark",
+        projects = (1..15).map { Project("p$it", "Project $it", listOf("/workspace/project-$it")) },
+        chats = (1..100).map { Chat("c$it", "Build feature $it", "Review code and verify the Android changes", "/workspace/project-1", if (it == 1) "active" else "idle") })
+    private fun render(state: androidx.compose.runtime.MutableState<ScreenState>) {
+        compose.activityRule.scenario.onActivity { activity ->
+            val vm = RemoteViewModel(activity.application)
+            activity.setContent { RemoteTheme(state.value.theme, state.value.accent, motion = false) { RemoteApp(state.value, vm) } }
+        }
+        compose.waitForIdle()
+    }
+    private fun screenshot(name: String) {
+        val dir = compose.activity.getExternalFilesDir(null)!!
+        File(dir, "$name.png").outputStream().use {
+            compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
+        }
+    }
+    @Test fun darkAndLightScreensAndProjects() {
+        val state = mutableStateOf(sample()); render(state)
+        compose.onNodeWithText("Your workspace").assertIsDisplayed()
+        screenshot("dark-chats")
+        compose.runOnIdle { state.value = state.value.copy(theme = "light", page = "projects") }
+        compose.onNodeWithText("Project 1").assertIsDisplayed()
+        screenshot("light-projects")
+        compose.runOnIdle { state.value = state.value.copy(page = "settings") }
+        compose.onNodeWithText("Sign out").performScrollTo().assertIsDisplayed()
+    }
+    @Test fun longConversationAndIncrementalDiffAreInspectable() {
+        val state = mutableStateOf(sample().copy(selectedChat = Chat("c", "Android client", "", "/workspace", "active"),
+            timeline = listOf(TimelineItem("user", "userMessage", "Build an Android client"), TimelineItem("agent", "agentMessage", "The native interface is ready."),
+                TimelineItem("terminal", "commandExecution", "All checks passed\n".repeat(1000), "./gradlew test", "completed"))))
+        render(state); screenshot("dark-conversation")
+        compose.onAllNodesWithText("Show more output").assertCountEquals(1)
+        compose.runOnIdle { state.value = state.value.copy(diff = Change("app/MainActivity.kt", (1..1200).joinToString("\n") { "+line $it" })) }
+        compose.onNodeWithText("app/MainActivity.kt").assertIsDisplayed()
+        screenshot("dark-diff")
+        compose.runOnIdle { state.value = state.value.copy(theme = "light") }
+        screenshot("light-diff")
+    }
+    @Test fun codeBlocksComposerControlsAndAttachmentChoicesAreVisible() {
+        val state = mutableStateOf(sample().copy(selectedChat = Chat("code", "Formatted chat", "", "/workspace", "idle"),
+            timeline = listOf(TimelineItem("a", "agentMessage", "## Example\n```python\nprint('hello')\n```"))))
+        render(state)
+        compose.onNodeWithText("Copy code").assertIsDisplayed()
+        compose.onNodeWithText("python").assertIsDisplayed()
+        compose.onNodeWithText("Codex").performClick()
+        compose.onNodeWithText("Questions and discussion").assertIsDisplayed()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        compose.onNodeWithContentDescription("Attach file or image").performClick()
+        compose.onNodeWithText("Photo or image").assertIsDisplayed()
+        compose.onNodeWithText("File").assertIsDisplayed()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        compose.waitForIdle()
+        screenshot("formatted-code-composer")
+    }
+    @Test fun appUpdateControlsShowReleaseNotesDownloadProgressAndInstallAction() {
+        val update = AppUpdate(BuildConfig.APPLICATION_ID, 5, "0.5.0", "a".repeat(64), 3 * 1024 * 1024, 30, "Update fixture release notes")
+        val state = mutableStateOf(sample().copy(page = "settings", appUpdate = update, updateMessage = "Version 0.5.0 is available"))
+        render(state)
+        compose.onNodeWithText("Check for updates").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Download 0.5.0 · 3.0 MB").assertIsDisplayed()
+        compose.onNodeWithText("Update fixture release notes").assertIsDisplayed()
+        compose.runOnIdle { state.value = state.value.copy(updateDownloading = true, updateProgress = 50) }
+        compose.onNodeWithText("50% · Keep the app open during download").assertIsDisplayed()
+        compose.runOnIdle { state.value = state.value.copy(updateDownloading = false, updateApk = "/fixture.apk") }
+        compose.onNodeWithText("Install update").assertIsDisplayed()
+        screenshot("app-update-settings")
+    }
+    @Test fun nativeAppUpdateDownloadsAndVerifiesInstalledSigningIdentity() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val loginFile = File(context.filesDir, "integration-login.json")
+        assumeTrue("Requires the temporary update host", BuildConfig.DEBUG && loginFile.exists())
+        val credentials = WireJson.parseToJsonElement(loginFile.readText()).jsonObject
+        val endpoint = InstrumentationRegistry.getArguments().getString("codexEndpoint", "http://127.0.0.1:8787")!!
+        val rpc = RpcClient()
+        try {
+            rpc.login(endpoint, credentials.text("username"), credentials.text("password"))
+            val update = parseAppUpdate(rpc.get("/v1/app-update?channel=debug"), context.packageName, android.os.Build.VERSION.SDK_INT)
+            assertEquals(BuildConfig.VERSION_CODE.toLong(), update.versionCode)
+            val file = rpc.downloadAppUpdate(update, File(context.cacheDir, "apk-updates")) {}
+            verifyUpdateApk(context, file, update)
+            val intent = apkInstallerIntent(context, file)
+            assertEquals("content", intent.data?.scheme); assertEquals(context.packageName + ".apkprovider", intent.data?.authority)
+            assertEquals("application/vnd.android.package-archive", intent.type)
+            assertTrue(intent.flags and android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+            context.contentResolver.openInputStream(intent.data!!)?.use { assertEquals(file.length(), it.available().toLong()) }
+            assertTrue(runCatching { verifyUpdateApk(context, file, update.copy(versionCode = update.versionCode + 1)) }.isFailure)
+            if (InstrumentationRegistry.getArguments().getString("codexInstallerSmoke") == "true") {
+                assertTrue(context.packageManager.canRequestPackageInstalls())
+                val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+                fun hasInstallButton(node: android.view.accessibility.AccessibilityNodeInfo?): Boolean {
+                    if (node == null) return false
+                    if (node.text?.toString()?.trim()?.equals("Install", ignoreCase = true) == true && node.isEnabled && node.isClickable) return true
+                    return (0 until node.childCount).any { hasInstallButton(node.getChild(it)) }
+                }
+                try {
+                    InstrumentationRegistry.getInstrumentation().runOnMainSync { context.startActivity(intent) }
+                    withTimeout(120000) { while (true) {
+                        val root = automation.rootInActiveWindow
+                        if (root?.packageName?.toString()?.contains("packageinstaller") == true && hasInstallButton(root)) break
+                        kotlinx.coroutines.delay(100)
+                    } }
+                } finally {
+                    val capture = automation.takeScreenshot()
+                    File(context.getExternalFilesDir(null), "android-update-installer.png").outputStream().use { capture.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    capture.recycle()
+                    automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                }
+            }
+        } finally { rpc.logout(); rpc.close() }
+    }
+    @Test fun keystoreSessionAndDraftsSurviveStoreRecreation() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = LocalStore(context); val token = "local-test-token-".repeat(3)
+        store.signIn("https://example.test", LoginSession(token, "owner", System.currentTimeMillis() + 60000)); store.draft("test-chat", "unsent draft")
+        val reopened = LocalStore(context)
+        assertEquals(token, reopened.session()); assertEquals("owner", reopened.username); assertEquals("unsent draft", reopened.draft("test-chat"))
+        // A late send acknowledgement must not erase a newer draft, even across store recreation.
+        store.draft("test-chat", "next prompt typed while sending")
+        assertFalse(reopened.clearSentDraft("test-chat", "unsent draft"))
+        assertEquals("next prompt typed while sending", LocalStore(context).draft("test-chat"))
+        assertTrue(reopened.clearSentDraft("test-chat", "next prompt typed while sending"))
+        assertEquals("", LocalStore(context).draft("test-chat"))
+        val file = File(context.applicationInfo.dataDir, "shared_prefs/codex_remote.xml")
+        Thread.sleep(100)
+        assertFalse(file.readText().contains(token))
+        store.signOut(); assertEquals("", LocalStore(context).session())
+        store.signIn("https://example.test", LoginSession(token, "owner", System.currentTimeMillis() - 1))
+        assertEquals("", LocalStore(context).session()); store.signOut()
+    }
+    @Test fun releaseRenderingFrameMetrics() {
+        val state = mutableStateOf(sample()); render(state)
+        val frames = CopyOnWriteArrayList<Long>(); val thread = HandlerThread("frame-metrics").apply { start() }
+        val listener = android.view.Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
+            frames += metrics.getMetric(FrameMetrics.TOTAL_DURATION)
+        }
+        compose.activityRule.scenario.onActivity { it.window.addOnFrameMetricsAvailableListener(listener, Handler(thread.looper)) }
+        repeat(8) { compose.onRoot().performTouchInput { swipeUp(durationMillis = 400) }; compose.waitForIdle() }
+        compose.runOnIdle { state.value = state.value.copy(selectedChat = Chat("live", "Live work", "", "/workspace", "active"),
+            timeline = (1..20).map { TimelineItem("item$it", "agentMessage", "Message $it\n".repeat(30)) }) }
+        repeat(40) {
+            compose.runOnIdle { val items = state.value.timeline; state.value = state.value.copy(timeline = items.dropLast(1) + items.last().copy(text = items.last().text + "stream ")) }
+            Thread.sleep(50)
+        }
+        compose.activityRule.scenario.onActivity { it.window.removeOnFrameMetricsAvailableListener(listener) }
+        thread.quitSafely()
+        val refresh = compose.activity.display?.refreshRate ?: 60f
+        val budget = (1_000_000_000.0 / refresh).toLong(); val inside = frames.count { it <= budget }
+        val report = buildJsonObject { put("buildType", BuildConfig.BUILD_TYPE); put("frames", frames.size); put("refreshHz", refresh)
+            put("frameBudgetNanos", budget); put("withinBudgetPercent", if (frames.isEmpty()) 0.0 else 100.0 * inside / frames.size)
+            put("targetPercent", 95); put("device", android.os.Build.MODEL) }
+        File(compose.activity.getExternalFilesDir(null), "frame-metrics.json").writeText(report.toString())
+        assertTrue("No frame metrics collected", frames.isNotEmpty())
+    }
+    @Test fun nativeNetworkingJoinsTheRealBridge() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val loginFile = File(context.filesDir, "integration-login.json")
+        assumeTrue("Live local integration is debug-only and requires the test host", BuildConfig.DEBUG && loginFile.exists())
+        val credentials = WireJson.parseToJsonElement(loginFile.readText()).jsonObject
+        val endpoint = InstrumentationRegistry.getArguments().getString("codexEndpoint", "http://127.0.0.1:8787")!!
+        val expectedMode = InstrumentationRegistry.getArguments().getString("codexRuntimeMode")
+        val rpc = RpcClient()
+        try {
+            compose.onNodeWithText("Server URL").performTextReplacement(endpoint)
+            compose.onNodeWithText("Username").performTextReplacement(credentials.text("username"))
+            compose.onNodeWithText("Password").performTextReplacement(credentials.text("password"))
+            compose.onNodeWithText("Sign in").performClick()
+            compose.waitUntil(60000) { compose.onAllNodesWithText("15 projects", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Projects").performClick()
+            compose.waitUntil(10000) { compose.onAllNodesWithText("Saved on", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Chats").performClick()
+            compose.onNodeWithText("Your workspace").assertIsDisplayed()
+            compose.activityRule.scenario.recreate()
+            compose.onNodeWithText("Your workspace").assertIsDisplayed()
+            // Signing out must preserve the Activity's foreground state for the next login.
+            compose.onNodeWithText("Settings").performClick()
+            compose.onNodeWithText("Sign out").performScrollTo().performClick()
+            compose.onNodeWithText("Confirm sign out").performClick()
+            compose.waitUntil(10000) { compose.onAllNodesWithText("Server URL").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Server URL").performTextReplacement(endpoint)
+            compose.onNodeWithText("Username").performTextReplacement(credentials.text("username"))
+            compose.onNodeWithText("Password").performTextReplacement(credentials.text("password"))
+            compose.onNodeWithText("Sign in").performClick()
+            compose.waitUntil(60000) { compose.onAllNodesWithText("15 projects", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            rpc.login(endpoint, credentials.text("username"), credentials.text("password"))
+            val host = rpc.get("/v1/host"); assertTrue(host.text("backendPid").isNotEmpty())
+            if (expectedMode != null) assertEquals(expectedMode, host.text("runtimeMode"))
+            val snapshot = rpc.connect(); assertTrue(snapshot["ready"]?.jsonPrimitive?.boolean == true)
+            val projects = rpc.get("/v1/projects").array("projects"); assertEquals(15, projects.size)
+            val created = rpc.call("thread/start", buildJsonObject { put("ephemeral", true) }).obj("thread")
+            val read = rpc.call("thread/read", buildJsonObject { put("threadId", created.text("id")); put("includeTurns", false) }).obj("thread")
+            assertEquals(created.text("id"), read.text("id"))
+            withTimeout(10000) { while (true) { val event = rpc.events.receive(); if (event.text("method") == "thread/started" && event.obj("params").obj("thread").text("id") == created.text("id")) break } }
+        } finally { rpc.close(); LocalStore(context).signOut() }
+    }
+}

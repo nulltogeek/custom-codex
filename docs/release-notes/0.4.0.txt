@@ -1,0 +1,1 @@
+In-app updates: check for releases in Settings, download with progress, and open Android's installer. Downloads verify the package, version, SHA-256 checksum and installed signing identity. Includes the 0.3.0 Markdown, attachments, access controls, conversation mode and appearance improvements.

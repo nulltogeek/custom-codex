@@ -1,0 +1,1 @@
+In-app APK updates with verified downloads, release notes, progress and Android's installer. Improved reliability on slow WireGuard connections: downloads allow up to 15 minutes while stalled connections still time out after 30 seconds. Includes formatted code, attachments, access controls, Codex/Conversation modes and appearance options.
