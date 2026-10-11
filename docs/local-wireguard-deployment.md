@@ -2,7 +2,7 @@
 
 The app-server runs on `/home/nulltogeek`'s Linux machine. The VPS at `79.175.177.57` runs only the existing Nginx reverse proxy. The Android URL is **https://codex.geeksun.ir**. The desktop can be closed; the Linux machine, user service and WireGuard tunnel must remain available.
 
-As of October 11, 2026, APK 0.7.2 and the deployed standalone server use **username/password login**. See [picker/upload recovery](mobile-0.7.2.md), [desktop-owned chat recovery](mobile-0.7.1.md), [favorites, swipe archive and password changes](mobile-0.7.0.md), [chat loading and composer improvements](mobile-0.6.0.md), [the current in-app update guide](in-app-updates.md) and [login guide](username-password-login.md); the older token-based verification below is historical.
+As of October 11, 2026, APK 0.7.3 and the deployed standalone server use **username/password login**. See [Chats list pagination](mobile-0.7.3.md), [picker/upload recovery](mobile-0.7.2.md), [desktop-owned chat recovery](mobile-0.7.1.md), [favorites, swipe archive and password changes](mobile-0.7.0.md), [chat loading and composer improvements](mobile-0.6.0.md), [the current in-app update guide](in-app-updates.md) and [login guide](username-password-login.md); the older token-based verification below is historical.
 
 The model-provider HTTP 401 was repaired later on October 11. Real replies and a follow-up now pass through the deployed HTTPS/WSS endpoint; see [the authentication repair](#provider-authentication-repaired-on-october-11-2026).
 

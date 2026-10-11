@@ -11,6 +11,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
 
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
@@ -210,16 +211,21 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun page(value: String) { mutable.update { it.copy(page = value, selectedChat = null, diff = null) } }
     fun filterProject(id: String?) { mutable.update { it.copy(page = "chats", projectFilter = id, selectedChat = null) } }
     fun search(value: String) {
-        mutable.update { it.copy(searchTerm = value, catalogRevision = it.catalogRevision + 1, catalogError = null, activeCursor = null, archivedCursor = null) }; searchJob?.cancel()
+        mutable.update { it.copy(searchTerm = value, catalogRevision = it.catalogRevision + 1, catalogError = null, catalogErrorArchived = null, activeCursor = null, archivedCursor = null) }; searchJob?.cancel()
         val revision = mutable.value.catalogRevision
         if (rpc.status.value != "Connected") return
         searchJob = viewModelScope.launch(Dispatchers.IO) {
             delay(300)
             try {
-                val active = listPage(false, null, value); val archived = listPage(true, null, value)
-                if (mutable.value.catalogRevision != revision) return@launch
-                mutable.update { if (it.catalogRevision != revision) it else it.copy(chats = active.array("data").map { r -> parseChat(r.jsonObject) } + archived.array("data").map { r -> parseChat(r.jsonObject, true) },
-                    activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }) }
+                catalogMutex.withLock {
+                    if (mutable.value.catalogRevision != revision) return@withLock
+                    val active = listPage(false, null, value); val archived = listPage(true, null, value)
+                    if (mutable.value.catalogRevision != revision) return@withLock
+                    cachedList = JsonArray(catalogRows(active, false) + catalogRows(archived, true))
+                    mutable.update { if (it.catalogRevision != revision) it else it.copy(chats = mergeCatalogChats(emptyList(), cachedList.map { r -> parseChat(r.jsonObject, r.jsonObject.text("cachedArchived") == "true") }),
+                        activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }) }
+                    saveCache()
+                }
             } catch (e: Exception) { if (e is CancellationException) throw e; mutable.update { it.copy(notice = "Search unavailable: ${e.message}") } }
         }
     }
@@ -234,16 +240,21 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun refresh() = action { refreshAll(); mutable.update { if (it.historyAvailable) { it.selectedChat?.id?.let(uncertainChats::remove); it.copy(uncertainSend = false) } else it } }
 
     private suspend fun refreshAll() {
-        mutable.update { it.copy(catalogRevision = it.catalogRevision + 1, catalogError = null) }
+        mutable.update { it.copy(catalogRevision = it.catalogRevision + 1, catalogError = null, catalogErrorArchived = null, activeCursor = null, archivedCursor = null) }
         val revision = mutable.value.catalogRevision
+        val query = mutable.value.searchTerm
         val host = rpc.get("/v1/host"); mutable.update { it.copy(host = host.text("name", "Your computer"),
             passwordChangeAvailable = host.obj("capabilities")["passwordChange"]?.jsonPrimitive?.booleanOrNull == true) }
         val inventory = rpc.get("/v1/projects"); cachedInventory = inventory; applyInventory(inventory)
-        val active = listPage(false, null); val archived = listPage(true, null)
+        catalogMutex.withLock {
+            if (mutable.value.catalogRevision != revision) return@withLock
+            val active = listPage(false, null, query); val archived = listPage(true, null, query)
+            if (mutable.value.catalogRevision != revision) return@withLock
+            cachedList = refreshCatalogRows(cachedList, active, archived)
+            mutable.update { if (it.catalogRevision != revision) it else it.copy(chats = mergeCatalogChats(emptyList(), cachedList.map { r -> parseChat(r.jsonObject, r.jsonObject.text("cachedArchived") == "true") }),
+                activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }) }
+        }
         if (mutable.value.catalogRevision != revision) return
-        cachedList = JsonArray(active.array("data") + archived.array("data").map { r -> buildJsonObject { (r as? JsonObject)?.forEach { (k, v) -> put(k, v) }; put("cachedArchived", true) } })
-        mutable.update { if (it.catalogRevision != revision) it else it.copy(chats = cachedList.map { r -> parseChat(r.jsonObject, r.jsonObject.text("cachedArchived") == "true") }.sortedWith(compareByDescending<Chat> { c -> c.pinned }.thenByDescending { c -> c.updatedAt }),
-            activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }) }
         // Enrich the read-only full catalogue with live status from the shared runtime.
         val live = rpc.call("thread/list", buildJsonObject { put("limit", 50); put("sortKey", "updated_at"); put("useStateDbOnly", true)
             put("modelProviders", buildJsonArray {}); put("sourceKinds", JsonArray(sourceKinds.map(::JsonPrimitive))) })
@@ -266,26 +277,30 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         mutable.update { reconcilePendingSnapshot(it, raw) }
     }
     private suspend fun listPage(archived: Boolean, cursor: String?, query: String = mutable.value.searchTerm): JsonObject = rpc.get("/v1/history?archived=$archived" + (cursor?.let { "&cursor=${java.net.URLEncoder.encode(it, "UTF-8")}" } ?: "") + "&searchTerm=" + java.net.URLEncoder.encode(query, "UTF-8"))
-    fun loadMore(archived: Boolean) = viewModelScope.launch(Dispatchers.IO) {
-        if (!catalogMutex.tryLock()) return@launch
-        val initial = mutable.value
-        val cursor = if (archived) initial.archivedCursor else initial.activeCursor
-        if (cursor == null || initial.connection != "Connected") { catalogMutex.unlock(); return@launch }
-        mutable.update { it.copy(catalogLoading = true, catalogError = null) }
-        try {
-            val page = listPage(archived, cursor, initial.searchTerm)
-            if (mutable.value.catalogRevision != initial.catalogRevision) return@launch
-            val raw = page.array("data").map { r -> buildJsonObject { r.jsonObject.forEach { (k, v) -> put(k, v) }; put("cachedArchived", archived) } }
-            cachedList = JsonArray((cachedList + raw).distinctBy { it.jsonObject.text("id") })
-            mutable.update { if (it.catalogRevision != initial.catalogRevision) it else it.copy(chats = (it.chats + raw.map { r -> parseChat(r, archived) }).distinctBy { c -> c.id },
-                activeCursor = if (!archived) page.text("nextCursor").takeIf { next -> next.isNotEmpty() && next != cursor } else it.activeCursor,
-                archivedCursor = if (archived) page.text("nextCursor").takeIf { next -> next.isNotEmpty() && next != cursor } else it.archivedCursor) }
-            saveCache()
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
-            else mutable.update { if (it.catalogRevision != initial.catalogRevision) it else it.copy(catalogError = "Could not load more chats. Tap to retry.") }
-        } finally { mutable.update { it.copy(catalogLoading = false) }; catalogMutex.unlock() }
+    fun loadMore(archived: Boolean): Job {
+        val request = catalogPageRequest(mutable.value, archived)
+        return viewModelScope.launch(Dispatchers.IO) {
+            if (request == null) return@launch
+            catalogMutex.withLock {
+                // Queued callbacks for the same page or an earlier search become no-ops.
+                if (!request.isCurrent(mutable.value)) return@withLock
+                mutable.update { it.copy(catalogLoading = true, catalogError = null, catalogErrorArchived = null) }
+                try {
+                    val page = listPage(archived, request.cursor, request.query)
+                    if (mutable.value.catalogRevision != request.revision) return@withLock
+                    val raw = catalogRows(page, archived)
+                    cachedList = mergeCatalogRows(cachedList, raw)
+                    mutable.update { if (it.catalogRevision != request.revision) it else it.copy(chats = mergeCatalogChats(it.chats, raw.map { r -> parseChat(r, archived) }),
+                        activeCursor = if (!archived) page.text("nextCursor").takeIf { next -> next.isNotEmpty() && next != request.cursor } else it.activeCursor,
+                        archivedCursor = if (archived) page.text("nextCursor").takeIf { next -> next.isNotEmpty() && next != request.cursor } else it.archivedCursor) }
+                    saveCache()
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                    else mutable.update { if (it.catalogRevision != request.revision) it else it.copy(catalogError = "Could not load more chats. Tap to retry.", catalogErrorArchived = archived) }
+                } finally { mutable.update { it.copy(catalogLoading = false) } }
+            }
+        }
     }
     fun open(chat: Chat) {
         olderJob?.cancel()

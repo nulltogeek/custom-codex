@@ -218,12 +218,15 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             category && projectMatch && (chat.title.contains(query, true) || chat.preview.contains(query, true))
         }
     }
-    val listState = rememberLazyListState()
-    val cursor = if (tab == 3) null else if (tab == 1) state.archivedCursor else state.activeCursor
-    LaunchedEffect(cursor, tab, query, state.projectFilter, state.catalogError, state.connection, state.catalogLoading) {
-        if (cursor != null && state.catalogError == null && !state.catalogLoading && state.connection == "Connected")
-            snapshotFlow { listState.layoutInfo.totalItemsCount > 0 && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= listState.layoutInfo.totalItemsCount - 4 }
-                .collect { nearEnd -> if (nearEnd) loadMore(tab == 1) }
+    val listState = key(tab, query, state.projectFilter) { rememberLazyListState() }
+    val page = nextCatalogPage(state, tab)
+    val error = page?.let { catalogPageError(state, it.archived) }
+    val expectedItems = 3 + (if (state.pending.isEmpty()) 0 else 1) + maxOf(1, list.size) + (if (page == null) 0 else 1)
+    val latestLoadMore by rememberUpdatedState(loadMore)
+    LaunchedEffect(page, listState, expectedItems, error, state.connection, state.catalogLoading) {
+        if (page != null && error == null && !state.catalogLoading && state.connection == "Connected")
+            snapshotFlow { listState.layoutInfo.totalItemsCount == expectedItems && nearCatalogEnd(listState.layoutInfo.totalItemsCount, listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) }
+                .collect { nearEnd -> if (nearEnd) latestLoadMore(page.archived) }
     }
     LazyColumn(Modifier.fillMaxSize().testTag("catalog-list"), state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         item {
@@ -249,15 +252,15 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         }
         item { CompactSearch(query, vm::search) }
         item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(0 to "Recent", 3 to "Favorites", 1 to "Archived", 2 to "Agent chats").forEach { (i, label) -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(label) }) } } }
-        if (list.isEmpty()) item { EmptyState(if (query.isNotEmpty()) "No matching chats" else if (tab == 3) "No favorite chats yet" else "No chats here yet", if (tab == 3) "Tap a chat's star to keep it here." else "Choose a project or start a conversation.") }
+        if (list.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (tab == 3) "No favorite chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (tab == 3) "Tap a chat's star to keep it here." else "Choose a project or start a conversation.") }
         items(list, key = { it.id }, contentType = { "chat" }) { chat ->
             val p = state.projects.find { it.id == (state.assignments[chat.id] ?: chat.projectId) } ?: state.projects.find { chat.cwd in it.roots }
             SwipeArchiveRow(chat, canArchive(state, chat), archive = { archive(chat) }) {
                 ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) })
             }
         }
-        if (cursor != null) item(key = "catalog-footer") {
-            PageLoader(state.catalogLoading, state.catalogError, "More chats load as you scroll", state.connection == "Connected") { loadMore(tab == 1) }
+        if (page != null) item(key = "catalog-footer") {
+            PageLoader(state.catalogLoading, error, "More chats load as you scroll", state.connection == "Connected") { loadMore(page.archived) }
         }
 
     }

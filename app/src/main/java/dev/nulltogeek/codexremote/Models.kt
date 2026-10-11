@@ -41,7 +41,7 @@ data class ScreenState(
     val passwordChangeAvailable: Boolean = false, val passwordChanging: Boolean = false,
     val passwordMessage: String = "", val passwordChanged: Boolean = false,
     val activeCursor: String? = null, val archivedCursor: String? = null,
-    val catalogLoading: Boolean = false, val catalogError: String? = null, val catalogRevision: Long = 0,
+    val catalogLoading: Boolean = false, val catalogError: String? = null, val catalogErrorArchived: Boolean? = null, val catalogRevision: Long = 0,
     val selectedChat: Chat? = null, val timeline: List<TimelineItem> = emptyList(),
     val pending: List<PendingInput> = emptyList(), val models: List<ModelChoice> = emptyList(),
     val selectedModel: String = "", val selectedEffort: String = "", val draft: String = "",

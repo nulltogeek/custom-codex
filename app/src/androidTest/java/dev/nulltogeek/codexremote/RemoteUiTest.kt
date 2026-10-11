@@ -252,6 +252,48 @@ class RemoteUiTest {
         assertEquals(2, calls)
     }
 
+    @Test fun catalogueAppendsOnePageWithoutJumpingOrEagerlyLoadingAllPages() {
+        val state = mutableStateOf(sample().copy(chats = sample().chats.take(20), activeCursor = "page2"))
+        var calls = 0
+        val vm = RemoteViewModel(compose.activity.application)
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { ChatsScreen(state.value, vm, approval = {}, loadMore = {
+                calls++
+                state.value = state.value.copy(catalogLoading = true)
+            }) }
+        } }
+        compose.waitForIdle(); assertEquals(0, calls)
+        compose.onNodeWithTag("catalog-list").performScrollToIndex(20)
+        compose.waitUntil(10000) { calls == 1 }
+        compose.onNodeWithText("Build feature 18").assertIsDisplayed()
+        val top = compose.onNodeWithText("Build feature 18").fetchSemanticsNode().boundsInRoot.top
+        compose.runOnIdle { state.value = state.value.copy(chats = sample().chats.take(40), activeCursor = "page3", catalogLoading = false) }
+        compose.waitForIdle(); assertEquals(1, calls)
+        assertEquals(top, compose.onNodeWithText("Build feature 18").fetchSemanticsNode().boundsInRoot.top, 2f)
+        compose.onNodeWithTag("catalog-list").performScrollToIndex(40)
+        compose.waitUntil(10000) { calls == 2 }
+        compose.runOnIdle { state.value = state.value.copy(chats = sample().chats.take(60), activeCursor = null, catalogLoading = false) }
+        compose.waitForIdle(); assertEquals(2, calls)
+    }
+
+    @Test fun filteredAgentCatalogueTraversesHiddenPagesAndArchivedAgents() {
+        val state = mutableStateOf(sample().copy(chats = sample().chats.take(20), projectFilter = "p2", activeCursor = "page2", archivedCursor = "archive2"))
+        val requests = mutableListOf<Boolean>()
+        val vm = RemoteViewModel(compose.activity.application)
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { ChatsScreen(state.value, vm, approval = {}, loadMore = { archived ->
+                requests += archived
+                state.value = if (!archived) state.value.copy(activeCursor = null) else state.value.copy(archivedCursor = null,
+                    chats = state.value.chats + Chat("older-agent", "Older agent result", "", "/workspace/project-2", archived = true, source = "subAgent"))
+            }) }
+        } }
+        compose.waitUntil(10000) { requests == listOf(false) }
+        compose.onNodeWithText("Agent chats").performClick()
+        compose.waitUntil(10000) { requests == listOf(false, true) }
+        compose.onNodeWithText("Older agent result").assertIsDisplayed()
+        compose.waitForIdle(); assertEquals(listOf(false, true), requests)
+    }
+
     @Test fun nativeAppUpdateDownloadsAndVerifiesInstalledSigningIdentity() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val loginFile = File(context.filesDir, "integration-login.json")

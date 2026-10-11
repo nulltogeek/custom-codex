@@ -1,0 +1,1 @@
+Chats load more as you scroll near the bottom. Refresh keeps chats you have already loaded, project filters continue through hidden pages, and Agent chats includes older archived agents. Loading errors offer a retry, and duplicate/outdated page requests are ignored. App update only; existing login sessions remain valid.
