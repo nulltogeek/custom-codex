@@ -1,0 +1,7 @@
+Stop now sits beside Send in the composer.
+Messages sent while Codex works are queued. Expand the queue to edit messages, remove attachments, reorder messages or remove them.
+Queues are saved on this phone and send in order while the app is open and connected. Editing, Stop, failed turns and uncertain delivery pause the queue for review; tap Resume queue when ready.
+Running and finished commands appear as collapsed cards. Expand them to inspect output.
+Final changes summaries can be expanded and collapsed.
+Your messages and Codex replies have copy buttons that copy their full text.
+Tap the working heartbeat to inspect running and finished commands.

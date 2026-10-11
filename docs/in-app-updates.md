@@ -1,6 +1,6 @@
 # In-app APK updates
 
-APK 0.4.0 introduced in-app updates; 0.4.1 extended the download deadline for slow VPN links. Version 0.5.0 adds [compact chat, project and composer layouts](mobile-0.5.0.md). Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing updater users can install 0.7.6 from **Settings → App updates**.
+APK 0.4.0 introduced in-app updates; 0.4.1 extended the download deadline for slow VPN links. Version 0.5.0 adds [compact chat, project and composer layouts](mobile-0.5.0.md). Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing updater users can install 0.7.7 from **Settings → App updates**.
 
 ## On the phone
 
@@ -25,7 +25,7 @@ The build script runs Android tests/lint, builds debug/release APKs, copies the 
 To publish already-built APKs:
 
 ```bash
-node scripts/publish-app-update.mjs docs/release-notes/0.7.6.txt
+node scripts/publish-app-update.mjs docs/release-notes/0.7.7.txt
 ```
 
 Publishing verifies both APK signatures and actual package/version/minimum-SDK metadata using Android build-tools. It writes immutable APKs named by their SHA-256 and replaces each channel's manifest atomically. Future APK publications need no backend restart. The first updater deployment restarts the idle service to add these routes; that restart invalidates existing app login sessions.
@@ -142,3 +142,10 @@ Version 0.7.6/code 14 makes jump-to-latest an arrow-only button and adds Archive
 to bottom navigation. Archived history retains search, project filters, pagination
 and restore actions; Back returns to its originating section. See
 [release verification](mobile-0.7.6-verification.md).
+
+## 0.7.7 queue and conversation controls
+
+Version 0.7.7/code 15 adds saved message queues with editing and reordering,
+Stop beside Send, collapsed commands and final changes, message copy buttons,
+and a clickable working heartbeat. See [the message queue guide](message-queue.md),
+[the display guide](chat-display.md) and [release verification](mobile-0.7.7-verification.md).
