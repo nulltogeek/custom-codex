@@ -39,3 +39,29 @@ test('broker expands owner-selected controls while rejecting raw configuration b
   broker.accept('phone', { id: 4, method: 'turn/start', params: { collaborationMode: { settings: { developer_instructions: 'bypass' } } } });
   assert.equal(upstream.length, before); assert.equal(phone.at(-1).error.code, -32602);
 });
+
+test('phone forks apply named access and defer inherited goal continuation', () => {
+  assert.deepEqual(mobileOptions('thread/fork', { threadId: 'desktop', mobileMode: 'codex', accessMode: 'ask', excludeTurns: true }),
+    { threadId: 'desktop', excludeTurns: true, deferGoalContinuation: true, approvalPolicy: 'on-request', sandbox: 'workspace-write' });
+  const chat = mobileOptions('thread/fork', { threadId: 'desktop', mobileMode: 'chat', accessMode: 'full', deferGoalContinuation: false });
+  assert.equal(chat.sandbox, 'read-only'); assert.equal(chat.approvalPolicy, 'never');
+  assert.equal(chat.deferGoalContinuation, true); assert.equal(chat.historyMode, undefined);
+  assert.deepEqual(mobileOptions('thread/fork', { threadId: 'desktop', deferGoalContinuation: false }),
+    { threadId: 'desktop', deferGoalContinuation: true });
+});
+
+test('broker reports writer conflicts without retrying or forking and routes explicit fork controls', () => {
+  const upstream = [], phone = [];
+  const broker = new Broker({ upstream: message => upstream.push(message), desktop() {} });
+  broker.ready = true; broker.addClient('phone', message => phone.push(message));
+  broker.accept('phone', { id: 1, method: 'thread/resume', params: { threadId: 'desktop' } });
+  broker.receive({ id: upstream.at(-1).id, error: { code: -32600, message: 'thread desktop already has an active writer' } });
+  assert.equal(upstream.length, 1); assert.match(phone.at(-1).error.message, /active writer/);
+  broker.accept('phone', { id: 2, method: 'thread/fork', params: { threadId: 'desktop', mobileMode: 'chat', accessMode: 'full' } });
+  assert.equal(upstream.length, 2); assert.equal(upstream.at(-1).params.sandbox, 'read-only');
+  assert.equal(upstream.at(-1).params.deferGoalContinuation, true);
+  broker.receive({ id: upstream.at(-1).id, result: { thread: { id: 'copy' }, model: 'selected' } });
+  assert.equal(phone.at(-1).result.thread.id, 'copy'); assert.equal(broker.threadModels.get('copy'), 'selected');
+  broker.accept('phone', { id: 3, method: 'thread/fork', params: { threadId: 'desktop', sandbox: 'danger-full-access' } });
+  assert.equal(upstream.length, 2); assert.equal(phone.at(-1).error.code, -32602);
+});

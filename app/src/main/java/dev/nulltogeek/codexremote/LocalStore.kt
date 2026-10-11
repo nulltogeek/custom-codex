@@ -65,6 +65,14 @@ class LocalStore(private val context: Context) {
     fun chatMode(id: String): String = prefs.getString("mode:$id", "codex").orEmpty()
     fun accessMode(id: String): String = prefs.getString("access:$id", "host").orEmpty()
     fun chatOptions(id: String, mode: String, access: String) { prefs.edit { putString("mode:$id", mode); putString("access:$id", access) } }
+    fun copyChatDraft(from: String, to: String, mode: String, access: String) = synchronized(prefs) {
+        require(from != to)
+        prefs.edit {
+            putString("draft:$to", prefs.getString("draft:$from", ""))
+            putString("attachments:$to", prefs.getString("attachments:$from", "[]"))
+            putString("mode:$to", mode); putString("access:$to", access)
+        }
+    }
     fun attachments(id: String): List<Attachment> = try {
         WireJson.parseToJsonElement(prefs.getString("attachments:$id", "[]").orEmpty()).jsonArray.map { parseAttachment(it.jsonObject) }
     } catch (_: Exception) { emptyList() }

@@ -1,6 +1,6 @@
 # In-app APK updates
 
-APK 0.4.0 introduced in-app updates; 0.4.1 extended the download deadline for slow VPN links. Version 0.5.0 adds [compact chat, project and composer layouts](mobile-0.5.0.md). Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing updater users can install 0.7.0 from **Settings → App updates**.
+APK 0.4.0 introduced in-app updates; 0.4.1 extended the download deadline for slow VPN links. Version 0.5.0 adds [compact chat, project and composer layouts](mobile-0.5.0.md). Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing updater users can install 0.7.1 from **Settings → App updates**.
 
 ## On the phone
 
@@ -25,7 +25,7 @@ The build script runs Android tests/lint, builds debug/release APKs, copies the 
 To publish already-built APKs:
 
 ```bash
-node scripts/publish-app-update.mjs docs/release-notes/0.7.0.txt
+node scripts/publish-app-update.mjs docs/release-notes/0.7.1.txt
 ```
 
 Publishing verifies both APK signatures and actual package/version/minimum-SDK metadata using Android build-tools. It writes immutable APKs named by their SHA-256 and replaces each channel's manifest atomically. Future APK publications need no backend restart. The first updater deployment restarts the idle service to add these routes; that restart invalidates existing app login sessions.
@@ -82,7 +82,7 @@ Both APKs preserve the 0.5.0 signing identity. Publication verified actual packa
 
 Complete authenticated HTTPS downloads of both 0.6.0 channels passed size/SHA-256/local-metadata checks, along with unauthorized/browser-Origin rejection (`artifacts/v0.6.0-update-proxy.json`). Delivery checksums passed; Android accepted the release upgrade over the emulator’s existing release package. Physical-phone update installation remains unverified.
 
-## Current 0.7.0 library and account update
+## 0.7.0 library and account update
 
 Version 0.7.0/code 8 adds right-swipe archive/restore with confirmation, local per-account Favorites tabs for chats and projects, and **Settings → Change password**. See [the feature guide](mobile-0.7.0.md) for persistence, session revocation and validation. The backend endpoint was loaded with one user-service restart after confirming zero active turns and zero pending approvals; sign in again after that restart. Future password changes apply immediately without restarting Codex. Nginx was unchanged.
 
@@ -91,3 +91,11 @@ Both signed APKs passed actual package/version/minimum-SDK publication checks. R
 `node scripts/verify-app-update.mjs https://codex.geeksun.ir --local` passed complete authenticated downloads of both 0.7.0 channels, exact size/SHA-256 and local-metadata checks, plus unauthorized/browser-Origin rejection (`artifacts/v0.7.0-update-proxy.json`).
 
 All 42 backend tests, 43 Android JVM tests and five focused emulator UI checks passed; lint is clean. Both debug and release 0.7.0 APK upgrades installed successfully on the emulator after its boot/streamed-install recovery. Phone installation remains unverified. See the feature guide for the exact evidence and temporary emulator settings.
+
+## 0.7.1 desktop-owned chat recovery
+
+Version 0.7.1/code 9 explains active-writer conflicts and offers a confirmed copy
+of saved history and the unsent draft, including attachment previews and chat
+settings. Copying defers inherited goal work and never sends the draft
+automatically. See [the recovery guide](mobile-0.7.1.md) and
+[release verification](mobile-0.7.1-verification.md).

@@ -46,6 +46,7 @@ data class ScreenState(
     val loading: Boolean = false, val sending: Boolean = false, val notice: String? = null,
     val theme: String = "system", val diff: Change? = null, val page: String = "chats",
     val projectFilter: String? = null, val uncertainSend: Boolean = false,
+    val writerConflict: Boolean = false,
     val snapshotSequence: Long = 0, val itemSequences: Map<String, Long> = emptyMap(), val threadSequence: Long = 0,
     val searchTerm: String = "", val olderCursor: String? = null,
     val historyRevision: Long = 0, val hiddenOlderCount: Int = 0, val olderLoading: Boolean = false, val olderError: String? = null,

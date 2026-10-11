@@ -4,8 +4,11 @@ const chatInstructions = 'This thread is in conversation mode. Answer questions 
 
 // Named controls are expanded on the host; arbitrary policy/configuration overrides stay blocked.
 export function mobileOptions(method, params, currentModel) {
+  // A phone fork is a history copy. Only an explicit later Send may start work,
+  // including when the source contains a continuing goal.
+  if (method === 'thread/fork') params = { ...params, deferGoalContinuation: true };
   if (!Object.hasOwn(params, 'mobileMode') && !Object.hasOwn(params, 'accessMode')) return params;
-  if (!['thread/start', 'thread/resume', 'turn/start'].includes(method)) throw Error('Change mode or access before starting the next turn');
+  if (!['thread/start', 'thread/resume', 'thread/fork', 'turn/start'].includes(method)) throw Error('Change mode or access before starting the next turn');
   const mode = params.mobileMode ?? 'codex', selected = params.accessMode ?? 'host';
   if (!modes.has(mode) || !access.has(selected)) throw Error('Invalid conversation mode or access choice');
   const result = { ...params }; delete result.mobileMode; delete result.accessMode;

@@ -292,7 +292,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         synchronized(uploadJobs) { uploadJobs.values.forEach { it.cancel() }; uploadJobs.clear() }
         val history = cachedThreads[chat.id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
         val window = historyWindow(history, emptyList())
-        mutable.update { it.copy(selectedChat = chat, historyRevision = it.historyRevision + 1, diff = null, timeline = window, hiddenOlderCount = history.size - window.size, olderLoading = false, olderError = null, draft = store.draft(chat.id), attachments = store.attachments(chat.id), uploading = false, chatMode = store.chatMode(chat.id), accessMode = store.accessMode(chat.id), selectedModel = "", selectedEffort = "", uncertainSend = chat.id in uncertainChats, historyAvailable = true, activeTurnId = "", snapshotSequence = 0, itemSequences = emptyMap(), threadSequence = 0, olderCursor = null, lastTurnStatus = "", statusSequence = 0, titleSequence = 0) }
+        mutable.update { it.copy(selectedChat = chat, writerConflict = false, notice = null, historyRevision = it.historyRevision + 1, diff = null, timeline = window, hiddenOlderCount = history.size - window.size, olderLoading = false, olderError = null, draft = store.draft(chat.id), attachments = store.attachments(chat.id), uploading = false, chatMode = store.chatMode(chat.id), accessMode = store.accessMode(chat.id), selectedModel = "", selectedEffort = "", uncertainSend = chat.id in uncertainChats, historyAvailable = true, activeTurnId = "", snapshotSequence = 0, itemSequences = emptyMap(), threadSequence = 0, olderCursor = null, lastTurnStatus = "", statusSequence = 0, titleSequence = 0) }
         if (rpc.status.value == "Connected") action { loadThread(chat.id) }
     }
     private suspend fun loadThread(id: String) {
@@ -373,29 +373,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val state = mutable.value; val chat = state.selectedChat ?: return
         if ((state.draft.isBlank() && state.attachments.isEmpty()) || state.uploading || state.sending || state.uncertainSend || state.connection != "Connected" || chat.archived) return
         val text = state.draft
-        mutable.update { it.copy(sending = true, notice = null) }
+        mutable.update { it.copy(sending = true, notice = null, writerConflict = false) }
         viewModelScope.launch(Dispatchers.IO) {
             var mutationAttempted = false
             var acknowledged = false
             try {
                 val input = buildJsonArray { if (text.isNotBlank()) add(buildJsonObject { put("type", "text"); put("text", text) }); state.attachments.forEach { add(it.input) } }
-                if (chat.status == "active") {
-                    val turnId = state.activeTurnId.ifEmpty {
-                        rpc.call("thread/read", buildJsonObject { put("threadId", chat.id); put("includeTurns", true) }).obj("thread").array("turns")
-                            .mapNotNull { it as? JsonObject }.lastOrNull { it.text("status") == "inProgress" }?.text("id")
-                            ?: throw IllegalStateException("Refresh to load the active turn before sending")
-                    }
-                    mutationAttempted = true
-                    rpc.call("turn/steer", buildJsonObject { put("threadId", chat.id); put("expectedTurnId", turnId); put("input", input) })
-                } else {
-                    val loaded = rpc.call("thread/loaded/list").array("data").mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                    if (chat.id !in loaded) rpc.call("thread/resume", buildJsonObject { put("threadId", chat.id); put("excludeTurns", true); mobileParams(state).forEach { (k, v) -> put(k, v) } })
-                    mutationAttempted = true
-                    rpc.call("turn/start", buildJsonObject { put("threadId", chat.id); put("input", input)
-                        mobileParams(state).forEach { (k, v) -> put(k, v) }
-                        if (state.selectedModel.isNotEmpty()) put("model", state.selectedModel)
-                        if (state.selectedEffort.isNotEmpty()) put("effort", state.selectedEffort) })
-                }
+                submitThreadInput(state, input, rpc::call) { mutationAttempted = true }
                 acknowledged = true
                 uncertainChats.remove(chat.id)
                 val cleared = store.clearSentDraft(chat.id, text)
@@ -407,11 +391,54 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 if (e is CancellationException && e !is TimeoutCancellationException) throw e
                 val uncertain = uncertainDelivery(mutationAttempted, acknowledged, e)
                 if (uncertain) uncertainChats.add(chat.id)
-                mutable.update { if (it.selectedChat?.id != chat.id) it.copy(sending = false) else it.copy(sending = false, uncertainSend = uncertain,
-                    notice = if (acknowledged) "Message accepted. History refresh is temporarily unavailable."
+                mutable.update { if (it.selectedChat?.id != chat.id) it.copy(sending = false) else it.copy(sending = false, uncertainSend = uncertain, writerConflict = !acknowledged && writerConflict(e),
+                    notice = if (!acknowledged && writerConflict(e)) null else if (acknowledged) "Message accepted. History refresh is temporarily unavailable."
                     else (e.message ?: "Send failed") + if (uncertain) ". Refresh and check history before sending again." else "") }
                 if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
             }
+        }
+    }
+    fun continueInNewChat() {
+        val source = mutable.value
+        val original = source.selectedChat ?: return
+        if (!source.writerConflict || source.sending || source.uploading || source.uncertainSend ||
+            source.connection != "Connected" || original.archived) return
+        mutable.update { it.copy(sending = true, notice = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            var copiedId: String? = null
+            try {
+                val result = rpc.call("thread/fork", recoveryParams(source))
+                val copied = parseChat(result.obj("thread"))
+                require(copied.id.isNotEmpty() && copied.id != original.id) { "The server did not create a separate chat" }
+                copiedId = copied.id
+                // Keep the source as a backup. Capture edits made while the fork was pending.
+                store.copyChatDraft(original.id, copied.id, source.chatMode, source.accessMode)
+                mutable.update { it.copy(chats = listOf(copied) + it.chats.filter { c -> c.id != copied.id }) }
+                if (mutable.value.selectedChat?.id == original.id) {
+                    open(copied)
+                    mutable.update { it.copy(selectedModel = source.selectedModel.ifEmpty { result.text("model") },
+                        selectedEffort = source.selectedEffort.ifEmpty { result.text("reasoningEffort") },
+                        notice = "History and draft copied. Review your message, then tap Send.") }
+                } else mutable.update { it.copy(notice = "Your copied chat is ready in Chats. Its draft is saved.") }
+                val title = original.title.take(90) + " (copy)"
+                rpc.call("thread/name/set", jsonObject("threadId" to copied.id, "name" to title))
+                mutable.update { it.copy(chats = it.chats.map { c -> if (c.id == copied.id) c.copy(title = title) else c },
+                    selectedChat = it.selectedChat?.let { c -> if (c.id == copied.id) c.copy(title = title) else c }) }
+                val projectId = source.assignments[original.id] ?: original.projectId
+                if (projectId != null && copied.projectId != projectId) {
+                    rpc.call("thread/metadata/update", jsonObject("threadId" to copied.id, "projectId" to projectId))
+                    mutable.update { it.copy(assignments = it.assignments + (copied.id to projectId)) }
+                }
+                refreshAll()
+            } catch (e: Exception) {
+                if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                else mutable.update { it.copy(notice = if (copiedId != null)
+                    "Chat copied and draft saved. Some details could not refresh: ${e.message}"
+                    else if (e !is RpcException)
+                        "Could not confirm the copy. Check Chats before trying again. Your original draft is saved."
+                    else "Could not copy this chat: ${e.message}. Your draft is saved.") }
+            } finally { mutable.update { it.copy(sending = false) } }
         }
     }
     fun removeAttachment(id: String) {

@@ -1,0 +1,1 @@
+Fix desktop-owned chat errors: Continue in a new chat copies saved history, your unsent draft, attachments and chat settings. Review and send when ready; the original stays available. Checks runtime ownership before starting or steering messages and preserves drafts on writer conflicts. Copying never sends a prompt automatically.

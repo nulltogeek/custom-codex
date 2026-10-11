@@ -164,6 +164,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     IconButton(onClick = vm::noticeDismiss) { Icon(Icons.Outlined.Close, "Dismiss notice") }
                 }
             } }
+            if (state.writerConflict && state.selectedChat != null) ThreadWriterNotice(state, vm::continueInNewChat)
             val screenKey = when { !state.signedIn -> "login"; state.diff != null -> "diff"; state.selectedChat != null -> "chat:${state.selectedChat.id}"; else -> state.page }
             Crossfade(screenKey, Modifier.weight(1f), animationSpec = tween(if (state.motion) 160 else 0), label = "Screen transition") { screen -> when {
                 screen == "login" -> ConnectionScreen(state.endpoint, state.username, state.loading, vm::signIn)
