@@ -1,0 +1,5 @@
+Interactive Codex questions now appear during work. Tap Answer questions, choose an option or write your own answer, then Submit answer.
+Answers reach the running task immediately instead of waiting in the message queue. Questions can also be answered after the task finishes.
+Blocking questions use the same controls and remain reachable above the conversation. Each pending request is shown separately in the library.
+Submission errors retain your answers in the open dialog. Reconnect before sending; uncertain delivery requires checking chat history before trying again.
+A reconnect race was corrected so delivered events carry the current reconnect position.
