@@ -115,10 +115,18 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     var approval by remember { mutableStateOf<PendingInput?>(null) }
     var confirmArchive by remember { mutableStateOf<Chat?>(null) }
     var confirmDelete by remember { mutableStateOf<Chat?>(null) }
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    val libraryVisible = state.signedIn && state.selectedChat == null && state.diff == null
+    LaunchedEffect(libraryVisible) { if (!libraryVisible) drawer.close() }
     val pending = approval?.let { candidate -> state.pending.find { it.id == candidate.id } }
     BackHandler(state.diff != null || state.selectedChat != null) {
         if (state.diff != null) vm.showDiff(null) else vm.page(state.page)
     }
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = libraryVisible, drawerContent = {
+        if (state.signedIn) AppSidebar(state) { page -> vm.page(page); scope.launch { drawer.close() } }
+    }) {
+    BackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
     Scaffold(containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(expandedHeight = 56.dp, title = {
@@ -129,7 +137,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             }, navigationIcon = {
                 if (state.diff != null || state.selectedChat != null) IconButton(onClick = { if (state.diff != null) vm.showDiff(null) else vm.page(state.page) }) {
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
-                }
+                } else if (state.signedIn) IconButton(onClick = { scope.launch { drawer.open() } }, modifier = Modifier.testTag("open-sidebar")) { Icon(Icons.Outlined.Menu, "Open navigation menu") }
             }, actions = {
                 if (state.signedIn) {
                     IconButton(onClick = { vm.refresh() }, enabled = canRefreshHistory(state)) { Icon(Icons.Outlined.Refresh, "Refresh history") }
@@ -140,22 +148,6 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     }
                 }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
-        }, bottomBar = {
-            if (state.signedIn && state.selectedChat == null && state.diff == null) Surface(color = MaterialTheme.colorScheme.surface) {
-                Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    listOf(Triple("chats", "Chats", Icons.AutoMirrored.Outlined.Chat), Triple("archived", "Archived", Icons.Outlined.Archive), Triple("projects", "Projects", Icons.Outlined.FolderOpen), Triple("settings", "Settings", Icons.Outlined.Settings)).forEach { (page, label, icon) ->
-                        TextButton(onClick = { vm.page(page) }, modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("nav-$page").semantics { selected = state.page == page },
-                            colors = ButtonDefaults.textButtonColors(containerColor = if (state.page == page) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                                contentColor = if (state.page == page) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant),
-                            contentPadding = PaddingValues(horizontal = 6.dp)) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.height(4.dp))
-                                Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
-                            }
-                        }
-                    }
-                }
-            }
         }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (state.loading && !(state.refreshing && state.selectedChat == null && state.page in listOf("chats", "archived", "projects"))) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -184,6 +176,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             } }
         }
     }
+    }
     if (pending != null) ApprovalDialog(pending, state.loading, onDismiss = { approval = null }, onAnswer = { result -> vm.answer(pending, result) })
     confirmDelete?.let { chat -> AlertDialog(onDismissRequest = { confirmDelete = null }, title = { Text("Delete this chat permanently?") },
         text = { Text("Delete “${chat.title}” from your computer and this phone. This cannot be undone. Remove queued messages before deleting.") },
@@ -193,6 +186,26 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         text = { Text(if (chat.archived) "Return this conversation to your active chats on both devices." else "Move this conversation to archived history on both devices. Codex may also archive its child-agent chats.") },
         confirmButton = { TextButton(onClick = { vm.archive(chat); confirmArchive = null }) { Text(if (chat.archived) "Restore" else "Archive") } },
         dismissButton = { TextButton(onClick = { confirmArchive = null }) { Text("Cancel") } }) }
+}
+
+@Composable internal fun AppSidebar(state: ScreenState, navigate: (String) -> Unit) {
+    ModalDrawerSheet(Modifier.widthIn(max = 300.dp)) {
+        Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Codex Remote", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(state.host, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(state.connection, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            HorizontalDivider(Modifier.padding(bottom = 12.dp))
+            listOf(Triple("chats", "Chats", Icons.AutoMirrored.Outlined.Chat), Triple("archived", "Archived", Icons.Outlined.Archive),
+                Triple("projects", "Projects", Icons.Outlined.FolderOpen), Triple("settings", "Settings", Icons.Outlined.Settings)).forEach { (page, label, icon) ->
+                NavigationDrawerItem(label = { Text(label) }, selected = state.page == page, onClick = { navigate(page) },
+                    icon = { Icon(icon, null) }, modifier = Modifier.testTag("nav-$page").padding(vertical = 2.dp))
+            }
+            Text("${state.username} · ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
 }
 
 @Composable private fun ConnectionScreen(initialEndpoint: String, initialUsername: String, loading: Boolean, signIn: (String, String, String) -> Unit) {

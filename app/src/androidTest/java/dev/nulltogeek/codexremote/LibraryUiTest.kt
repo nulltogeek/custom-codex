@@ -122,8 +122,9 @@ class LibraryUiTest {
             RemoteApp(state.copy(signedIn = true, connection = "Connected", motion = false, chats = listOf(chat),
                 projects = listOf(Project("p", "Project", listOf("/workspace")))), vm)
         }
+        compose.onNodeWithTag("open-sidebar").performClick()
         compose.onNodeWithTag("nav-archived").assertIsDisplayed().performClick()
-        compose.onNodeWithTag("nav-archived").assertIsSelected()
+        assertArchiveDestination()
         compose.onNodeWithText("Saved conversation").performClick()
         compose.onNodeWithContentDescription("Delete chat").performClick()
         compose.onNodeWithText("Delete this chat permanently?").assertIsDisplayed()
@@ -133,13 +134,39 @@ class LibraryUiTest {
         compose.onNodeWithText("Cancel").performClick()
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNodeWithText("Archived chats").assertIsDisplayed()
-        compose.onNodeWithTag("nav-archived").assertIsSelected()
+        assertArchiveDestination()
         compose.onNodeWithText("Saved conversation").performClick()
         InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-        compose.onNodeWithTag("nav-archived").assertIsSelected()
+        assertArchiveDestination()
         compose.onNodeWithContentDescription("All projects").performClick()
-        compose.onNodeWithTag("nav-archived").assertIsSelected()
+        assertArchiveDestination()
         compose.runOnIdle { assertNull(vm.state.value.projectFilter) }
+    }
+
+    private fun assertArchiveDestination() {
+        compose.onNodeWithTag("open-sidebar").performClick()
+        compose.onNodeWithTag("nav-archived").assertIsSelected()
+        compose.onNodeWithTag("nav-archived").performClick()
+    }
+
+    @Test fun sidebarNavigatesAndBackClosesItWithoutChangingPage() {
+        val vm = RemoteViewModel(compose.activity.application)
+        render {
+            val state by vm.state.collectAsState()
+            RemoteApp(state.copy(signedIn = true, connection = "Connected", motion = false), vm)
+        }
+        compose.onNodeWithTag("open-sidebar").performClick()
+        compose.onNodeWithTag("nav-projects").performClick()
+        compose.onNodeWithText("Projects").assertIsDisplayed()
+        compose.onNodeWithTag("open-sidebar").performClick()
+        compose.onNodeWithTag("nav-projects").assertIsSelected()
+        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        compose.waitForIdle()
+        compose.onNodeWithTag("open-sidebar").assertIsDisplayed()
+        compose.runOnIdle { assertEquals("projects", vm.state.value.page) }
+        compose.onNodeWithTag("open-sidebar").performClick()
+        compose.onNodeWithTag("nav-settings").performClick()
+        compose.onNodeWithText("Settings").assertIsDisplayed()
     }
 
     @Test fun projectFavoritesFilterAndToggleAt320Dp() {

@@ -53,3 +53,8 @@ input or queued messages. The app removes cached history, favorites and drafts o
 after confirmation from the server (or a `thread/deleted` event). An uncertain response
 asks the user to refresh rather than automatically retrying. The host bridge must be
 updated to allow this API; no direct database or filesystem deletion is used.
+
+Library navigation uses a sidebar opened with the toolbar menu button or an edge
+swipe. Chats, Archived, Projects and Settings have full-width labeled destinations.
+Selecting one closes the sidebar; Back closes an open sidebar first. Conversations
+and diffs keep their Back button, returning to the library section they came from.
