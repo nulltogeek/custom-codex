@@ -109,6 +109,23 @@ test('turn completion clears unanswered requests', () => {
   h.broker.receive({ method: 'turn/completed', params: { threadId: 'a', turn: { id: 't' } } });
   assert.equal(h.broker.snapshot().pendingRequests.length, 0);
 });
+test('async question notifications reach phones and replies steer without a pending approval', () => {
+  const h = harness(); h.initialize();
+  const item = { id: 'question', type: 'agentMessage', phase: 'commentary', delivery: 'async', text: '',
+    questions: [{ title: 'Which format?', options: ['PNG', 'JPEG'] }, { title: 'What size?' }] };
+  h.broker.receive({ method: 'item/completed', params: { threadId: 'chat', turnId: 'turn', item } });
+  assert.deepEqual(h.phone.at(-1).message.params.item, item);
+  assert.equal(h.broker.snapshot().pendingRequests.length, 0);
+  const params = { threadId: 'chat', expectedTurnId: 'turn', input: [{ type: 'text', text: 'Which format?\nPNG\n\nWhat size?\n1024 px' }] };
+  h.broker.accept('phone', { id: 40, method: 'turn/steer', params });
+  assert.equal(h.upstream.at(-1).method, 'turn/steer');
+  assert.deepEqual(h.upstream.at(-1).params, params);
+  h.broker.receive({ id: h.upstream.at(-1).id, result: { turnId: 'turn' } });
+  assert.deepEqual(h.phone.at(-1).result, { turnId: 'turn' });
+  assert.equal(h.phone.at(-1).id, 40);
+  h.broker.receive({ method: 'turn/completed', params: { threadId: 'chat', turn: { id: 'turn', status: 'completed' } } });
+  assert.deepEqual(h.broker.events.find(e => e.event.message.method === 'item/completed').event.message.params.item, item);
+});
 test('backend project notifications invalidate the host adapter and sequence markers accompany phone responses', () => {
   const notifications = []; const h = harness({ onNotification: m => notifications.push(m) }); h.initialize();
   h.broker.receive({ method: 'project/changed', params: { projectId: 'p', changeType: 'updated' } });

@@ -21,7 +21,7 @@ fun conversationTimeline(state: ScreenState): List<TimelineItem> = state.timelin
             ?: if (running) null else items.lastOrNull { it.type == "agentMessage" && it.phase.isEmpty() }
         val messages = items.filter { item ->
             item.type in listOf("userMessage", "error", "commandExecution") ||
-                (item.type == "agentMessage" && (item.id == final?.id ||
+                (item.type == "agentMessage" && (item.delivery == "async" || item.questions.isNotEmpty() || item.id == final?.id ||
                     (turnId.isEmpty() && !running && item.phase.isEmpty())))
         }
         if (running) messages else {

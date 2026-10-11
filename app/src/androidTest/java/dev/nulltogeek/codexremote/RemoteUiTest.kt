@@ -30,6 +30,53 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 class RemoteUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @Test fun questionChoicesAndCustomAnswersSubmitTogetherWithoutDefaults() {
+        val questions = listOf(InputQuestion("format", "Choose a format", options = listOf(InputOption("PNG", "Supports transparency"), InputOption("JPEG"))),
+            InputQuestion("size", "What size?"))
+        var submitted: Map<String, String>? = null
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { QuestionDialog("fixture", questions, true, false, null, {}, { submitted = it }) }
+        } }
+        compose.onNodeWithTag("submit-question").assertIsNotEnabled()
+        compose.onNodeWithTag("question-option:format:PNG").performScrollTo().performClick()
+        compose.onNodeWithTag("question-answer:size").performScrollTo().performTextInput("1024 px")
+        compose.onNodeWithTag("submit-question").assertIsEnabled()
+        compose.onNodeWithTag("question-custom:format").performScrollTo().performClick()
+        compose.onNodeWithTag("submit-question").assertIsNotEnabled()
+        compose.onNodeWithTag("question-answer:format").performScrollTo().performTextInput("SVG")
+        compose.onNodeWithTag("submit-question").performClick()
+        compose.runOnIdle { assertEquals(mapOf("format" to "SVG", "size" to "1024 px"), submitted) }
+    }
+    @Test fun questionAnswersRemainEditableAfterConnectionLossAndFailedSubmission() {
+        val connected = mutableStateOf(true); val submitting = mutableStateOf(false); val error = mutableStateOf<String?>(null)
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("light", motion = false) { QuestionDialog("retry", listOf(InputQuestion("answer", "Your preference?")),
+                connected.value, submitting.value, error.value, {}, {}) }
+        } }
+        compose.onNodeWithTag("question-answer:answer").performTextInput("Keep my answer")
+        compose.runOnIdle { connected.value = false }
+        compose.onNodeWithTag("submit-question").assertIsNotEnabled()
+        compose.onNodeWithTag("question-answer:answer").assertTextContains("Keep my answer")
+        compose.runOnIdle { connected.value = true; submitting.value = true }
+        compose.onNodeWithTag("submit-question").assertIsNotEnabled()
+        compose.onNodeWithTag("question-answer:answer").assertIsNotEnabled()
+        compose.runOnIdle { submitting.value = false; error.value = "Temporary failure. Try again." }
+        compose.onNodeWithTag("question-error").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("question-answer:answer").assertTextContains("Keep my answer")
+        compose.onNodeWithTag("submit-question").assertIsEnabled()
+    }
+    @Test fun asyncQuestionCardAppearsDuringWorkAndOpensAnswerControls() {
+        val item = parseItem(WireJson.parseToJsonElement("""{"id":"ask","type":"agentMessage","phase":"commentary","delivery":"async","text":"Please choose","questions":[{"title":"Which format?","options":["PNG","JPEG"]}]}""").jsonObject, "t", "inProgress")
+        val state = mutableStateOf(sample().copy(selectedChat = Chat("chat", "Questions", "", "", "active"), activeTurnId = "t", timeline = listOf(item)))
+        render(state, narrow = true)
+        compose.onNodeWithTag("answer-question:ask").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("question-option:0:PNG").performScrollTo().performClick()
+        compose.onNodeWithTag("submit-question").assertIsEnabled()
+        compose.onNodeWithText("Later").performClick()
+        compose.runOnIdle { state.value = state.value.copy(answeredInputs = setOf("ask")) }
+        compose.onNodeWithTag("answer-question:ask").assertDoesNotExist()
+        compose.onNodeWithText("Answer sent").assertIsDisplayed()
+    }
     private fun sample() = ScreenState(signedIn = true, username = "owner", connection = "Connected", host = "Linux workstation", theme = "dark",
         projects = (1..15).map { Project("p$it", "Project $it", listOf("/workspace/project-$it")) },
         chats = (1..100).map { Chat("c$it", "Build feature $it", "Review code and verify the Android changes", "/workspace/project-1", if (it == 1) "active" else "idle") })

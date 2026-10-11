@@ -130,14 +130,15 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun RemoteApp(state: ScreenState, vm: RemoteViewModel) {
-    var approval by remember { mutableStateOf<PendingInput?>(null) }
+    var approvalId by rememberSaveable { mutableStateOf<String?>(null) }
+    var asyncQuestion by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmArchive by remember { mutableStateOf<Chat?>(null) }
     var confirmDelete by remember { mutableStateOf<Chat?>(null) }
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val libraryVisible = state.signedIn && state.selectedChat == null && state.diff == null
     LaunchedEffect(libraryVisible) { if (!libraryVisible) drawer.close() }
-    val pending = approval?.let { candidate -> state.pending.find { it.id == candidate.id } }
+    val pending = state.pending.find { it.id == approvalId }
     BackHandler(state.diff != null || state.selectedChat != null) {
         if (state.diff != null) vm.showDiff(null) else vm.page(state.page)
     }
@@ -186,16 +187,30 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             Crossfade(screenKey, Modifier.weight(1f), animationSpec = tween(if (state.motion) 160 else 0), label = "Screen transition") { screen -> when {
                 screen == "login" -> ConnectionScreen(state.endpoint, state.username, state.loading, vm::signIn)
                 screen == "diff" && state.diff != null -> DiffScreen(state.diff)
-                screen.startsWith("chat:") && state.selectedChat != null -> key(state.selectedChat.id) { Conversation(state, vm) { approval = it } }
+                screen.startsWith("chat:") && state.selectedChat != null -> key(state.selectedChat.id) { Conversation(state, vm, approval = { approvalId = it.id }, answerQuestion = { asyncQuestion = it.id }) }
                 screen == "projects" -> ProjectScreen(state, vm)
                 screen == "settings" -> SettingsScreen(state, vm)
-                screen == "archived" -> ChatsScreen(state, vm, approval = { approval = it }, archive = { confirmArchive = it }, delete = { confirmDelete = it }, archivedOnly = true)
-                else -> ChatsScreen(state, vm, approval = { approval = it }, archive = { confirmArchive = it }, delete = { confirmDelete = it })
+                screen == "archived" -> ChatsScreen(state, vm, approval = { approvalId = it.id }, archive = { confirmArchive = it }, delete = { confirmDelete = it }, archivedOnly = true)
+                else -> ChatsScreen(state, vm, approval = { approvalId = it.id }, archive = { confirmArchive = it }, delete = { confirmDelete = it })
             } }
         }
     }
     }
-    if (pending != null) ApprovalDialog(pending, state.loading, onDismiss = { approval = null }, onAnswer = { result -> vm.answer(pending, result) })
+    if (pending?.method == "item/tool/requestUserInput") QuestionDialog(pending.id, pending.questions(),
+        state.connection == "Connected", pending.id in state.answeringInputs, state.inputErrors[pending.id],
+        onDismiss = { approvalId = null }, onSubmit = { vm.answer(pending, questionResult(pending.questions(), it)) })
+    else if (pending != null) ApprovalDialog(pending, pending.id in state.answeringInputs || state.connection != "Connected",
+        onDismiss = { approvalId = null }, onAnswer = { result -> vm.answer(pending, result) })
+    val questionItem = state.timeline.find { it.id == asyncQuestion && it.questions.isNotEmpty() && it.id !in state.answeredInputs && !questionAnswered(it, state.timeline) }
+    if (questionItem != null) QuestionDialog(questionItem.id, questionItem.questions,
+        state.connection == "Connected",
+        questionItem.id in state.answeringInputs, state.inputErrors[questionItem.id], onDismiss = { asyncQuestion = null },
+        onSubmit = { vm.answerAsyncQuestion(questionItem, it) }, blockedReason = when {
+            state.uncertainSend -> "Refresh and check chat history before submitting again."
+            state.selectedChat?.archived == true -> "Restore this chat before answering."
+            state.sending && questionItem.id !in state.answeringInputs -> "Wait for the current message to finish sending."
+            else -> null
+        })
     confirmDelete?.let { chat -> AlertDialog(onDismissRequest = { confirmDelete = null }, title = { Text("Delete this chat permanently?") },
         text = { Text("Delete “${chat.title}” from your computer and this phone. This cannot be undone. Remove queued messages before deleting.") },
         confirmButton = { TextButton(onClick = { vm.deleteChat(chat); confirmDelete = null }, enabled = canDeleteChat(state, state.chats.find { it.id == chat.id } ?: chat)) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
@@ -287,11 +302,11 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     if (!archivedOnly) FilledTonalIconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat") }
                 }
             }
-            if (state.pending.isNotEmpty()) item {
-                Surface(onClick = { approval(state.pending.first()) }, color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
+            items(state.pending, key = { "input:${it.id}" }) { request ->
+                Surface(onClick = { approval(request) }, color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.NotificationsActive, null); Spacer(Modifier.width(12.dp))
-                        Column { Text("Your input is needed", fontWeight = FontWeight.SemiBold); Text("${state.pending.size} pending request(s)", style = MaterialTheme.typography.bodySmall) }
+                        Column(Modifier.weight(1f)) { Text("Your input is needed", fontWeight = FontWeight.SemiBold); Text(request.questions().firstOrNull()?.title ?: "Review requested action", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     }
                 }
             }
@@ -401,7 +416,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         } } }, confirmButton = { TextButton(onClick = { folders = null }) { Text("Close") } }) }
 }
 
-@Composable private fun Conversation(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit) {
+@Composable private fun Conversation(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit, answerQuestion: (TimelineItem) -> Unit) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) vm.attach(uris) }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -417,13 +432,20 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 else -> "Ready"
             }, style = MaterialTheme.typography.labelSmall)
         }
-        ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval, loadImage = vm::attachmentImage)
+        Column(Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
+            state.pending.filter { it.params.text("threadId") == state.selectedChat?.id }.forEach { request ->
+                OutlinedButton(onClick = { approval(request) }, Modifier.fillMaxWidth().testTag("pending-input:${request.id}")) {
+                    Text(request.questions().firstOrNull()?.title ?: "Review requested action", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+        ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval, loadImage = vm::attachmentImage, answerQuestion = answerQuestion)
         ChatComposer(state, vm, onPick = { picker.launch(it) })
     }
 }
 
 @Composable internal fun ChatTimeline(state: ScreenState, modifier: Modifier = Modifier, loadOlder: () -> Unit, showDiff: (Change) -> Unit, approval: (PendingInput) -> Unit,
-    loadImage: suspend (String) -> ByteArray = { error("Image unavailable") }) {
+    loadImage: suspend (String) -> ByteArray = { error("Image unavailable") }, answerQuestion: (TimelineItem) -> Unit = {}) {
     val listState = remember(state.selectedChat?.id) { LazyListState() }
     val followTail by remember(listState) { derivedStateOf { !listState.canScrollBackward } }
     val scope = rememberCoroutineScope()
@@ -438,10 +460,9 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
     Box(modifier.fillMaxWidth()) {
         LazyColumn(Modifier.fillMaxSize().testTag("history-list"), state = listState, reverseLayout = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(state.pending.filter { it.params.text("threadId") == state.selectedChat?.id }, key = { "pending-${it.id}" }) { request ->
-                Button(onClick = { approval(request) }, Modifier.fillMaxWidth()) { Text(if (request.method.contains("Approval")) "Review requested action" else "Answer Codex") }
+            items(messages.asReversed(), key = { it.id }, contentType = { it.type }) { item ->
+                MessageItem(item, showDiff, loadImage, answerQuestion, item.id in state.answeredInputs || questionAnswered(item, state.timeline))
             }
-            items(messages.asReversed(), key = { it.id }, contentType = { it.type }) { item -> MessageItem(item, showDiff, loadImage) }
             if (state.timeline.isEmpty() && !state.historyAvailable && state.selectedChat?.preview?.isNotBlank() == true) item { EmptyState("Earlier messages unavailable", "New messages will appear here. You can continue this conversation.") }
             else if (state.timeline.isEmpty()) item { EmptyState(if (state.chatMode == "chat") "A new conversation" else "Ready to build", if (state.chatMode == "chat") "Ask a question, share an image, or discuss an idea." else "Describe the work, attach a file, and choose how Codex can access your computer.") }
             if (hasOlder) item(key = "history-footer") {
@@ -467,7 +488,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
 }
 
-@Composable internal fun MessageItem(item: TimelineItem, showDiff: (Change) -> Unit, loadImage: suspend (String) -> ByteArray) {
+@Composable internal fun MessageItem(item: TimelineItem, showDiff: (Change) -> Unit, loadImage: suspend (String) -> ByteArray,
+    answerQuestion: (TimelineItem) -> Unit = {}, answered: Boolean = false) {
     var visibleLimit by rememberSaveable(item.id) { mutableIntStateOf(6000) }
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
     var copied by remember(item.id, item.text) { mutableStateOf(false) }
@@ -506,6 +528,13 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     else SelectionContainer { Text(visible, style = if (tool) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, fontFamily = if (tool) FontFamily.Monospace else FontFamily.Default) }
                 }
                 if (item.text.length > visibleLimit && item.type != "commandExecution") TextButton(onClick = { visibleLimit += 6000 }) { Text("Show more output") }
+                if (item.questions.isNotEmpty()) Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(if (answered) "Answer sent" else "Your answer is requested", fontWeight = FontWeight.SemiBold)
+                        item.questions.forEach { Text(it.title) }
+                        if (!answered) Button(onClick = { answerQuestion(item) }, modifier = Modifier.testTag("answer-question:${item.id}")) { Text("Answer questions") }
+                    }
+                }
                 item.images.forEachIndexed { index, image -> HistoryImage(image.source, "${image.name} ${index + 1}", loadImage) }
                 item.changes.forEach { change -> OutlinedButton(onClick = { showDiff(change) }, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Difference, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(change.path, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
             }
@@ -583,8 +612,6 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 @Composable private fun ApprovalDialog(request: PendingInput, loading: Boolean, onDismiss: () -> Unit, onAnswer: (JsonObject) -> Unit) {
     val params = request.params
     var answers by remember(request.id) { mutableStateOf<Map<String, String>>(emptyMap()) }
-    val questions = params.array("questions").mapNotNull { it as? JsonObject }
-    val isQuestion = request.method == "item/tool/requestUserInput"
     val isForm = request.method == "mcpServer/elicitation/request"
     val isPermissions = request.method == "item/permissions/requestApproval"
     val properties = params.obj("requestedSchema").obj("properties")
@@ -592,21 +619,11 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     val formValid = required.all { answers[it]?.isNotBlank() == true }
     val availableDecisions = params.array("availableDecisions")
     val approveAllowed = availableDecisions.isEmpty() || availableDecisions.any { (it as? JsonPrimitive)?.contentOrNull == "accept" }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (isQuestion) "Codex needs your input" else if (isForm) "Tool needs your input" else "Review requested action") },
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(if (isForm) "Tool needs your input" else "Review requested action") },
         text = {
             Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(params.text("reason").ifEmpty { params.text("message").ifEmpty { request.method } }, style = MaterialTheme.typography.bodyMedium)
-                if (isQuestion) questions.forEach { q ->
-                    Text(q.text("question"), fontWeight = FontWeight.SemiBold)
-                    q.array("options").mapNotNull { it as? JsonObject }.forEach { option ->
-                        val label = option.text("label")
-                        Row(Modifier.fillMaxWidth().clickable { answers = answers + (q.text("id") to label) }, verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(answers[q.text("id")] == label, onClick = { answers = answers + (q.text("id") to label) })
-                            Column { Text(label); if (option.text("description").isNotEmpty()) Text(option.text("description"), style = MaterialTheme.typography.bodySmall) }
-                        }
-                    }
-                    OutlinedTextField(answers[q.text("id")].orEmpty(), { answers = answers + (q.text("id") to it) }, Modifier.fillMaxWidth(), label = { Text("Your answer") })
-                } else if (isForm && properties.isNotEmpty()) properties.forEach { (id, value) ->
+                if (isForm && properties.isNotEmpty()) properties.forEach { (id, value) ->
                     val spec = value.jsonObject
                     if (spec.text("type") == "boolean") Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(answers[id] == "true", { answers = answers + (id to it.toString()) }); Text(spec.text("title", id))
@@ -615,9 +632,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 Text("An answer here resolves this request for all clients connected to this server.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }, confirmButton = {
-            TextButton(enabled = !loading && (!isQuestion || questions.all { answers[it.text("id")]?.isNotBlank() == true }) && (!isForm || formValid) && (isQuestion || isForm || isPermissions || approveAllowed), onClick = {
+            TextButton(enabled = !loading && (!isForm || formValid) && (isForm || isPermissions || approveAllowed), onClick = {
                 val result = when {
-                    isQuestion -> buildJsonObject { put("answers", buildJsonObject { questions.forEach { q -> put(q.text("id"), buildJsonObject { put("answers", buildJsonArray { add(answers[q.text("id")].orEmpty()) }) }) } }) }
                     isForm -> buildJsonObject { put("action", "accept"); put("content", buildJsonObject { answers.forEach { (id, answer) ->
                         val type = (properties[id] as? JsonObject)?.text("type")
                         put(id, when (type) { "boolean" -> JsonPrimitive(answer == "true"); "integer" -> answer.toLongOrNull()?.let(::JsonPrimitive) ?: JsonPrimitive(answer); "number" -> answer.toDoubleOrNull()?.let(::JsonPrimitive) ?: JsonPrimitive(answer); else -> JsonPrimitive(answer) })
@@ -627,11 +643,11 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     else -> jsonObject("decision" to "accept")
                 }
                 onAnswer(result)
-            }) { Text(if (isQuestion || isForm) "Submit answer" else if (isPermissions) "Allow for this turn" else "Approve once") }
+            }) { Text(if (isForm) "Submit answer" else if (isPermissions) "Allow for this turn" else "Approve once") }
         }, dismissButton = {
             Row {
                 TextButton(onClick = onDismiss) { Text("Later") }
-                if (!isQuestion) TextButton(enabled = !loading, onClick = { onAnswer(when {
+                TextButton(enabled = !loading, onClick = { onAnswer(when {
                     isForm -> jsonObject("action" to "decline")
                     isPermissions -> buildJsonObject { put("permissions", buildJsonObject {}); put("scope", "turn") }
                     request.method in listOf("applyPatchApproval", "execCommandApproval") -> jsonObject("decision" to "denied")

@@ -690,9 +690,56 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         rpc.call("turn/interrupt", jsonObject("threadId" to id, "turnId" to turnId))
         }
     }
-    fun answer(request: PendingInput, result: JsonObject) = action {
-        rpc.call("bridge/respond", buildJsonObject { put("requestId", request.id); put("result", result) })
-        mutable.update { it.copy(pending = it.pending.filter { r -> r.id != request.id }) }
+    fun answer(request: PendingInput, result: JsonObject) {
+        val initial = mutable.value
+        if (initial.connection != "Connected" || initial.pending.none { it.id == request.id } || request.id in initial.answeringInputs) return
+        if (!mutable.compareAndSet(initial, initial.copy(answeringInputs = initial.answeringInputs + request.id,
+                inputErrors = initial.inputErrors - request.id))) return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                rpc.call("bridge/respond", buildJsonObject { put("requestId", request.id); put("result", result) })
+                mutable.update { it.copy(pending = it.pending.filter { r -> r.id != request.id }) }
+            } catch (e: Exception) {
+                if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                else mutable.update { it.copy(inputErrors = it.inputErrors + (request.id to (e.message ?: "Answer could not be sent. Try again when connected.")),
+                    notice = if (request.method == "item/tool/requestUserInput") it.notice else e.message ?: "Answer could not be sent.") }
+            } finally { mutable.update { it.copy(answeringInputs = it.answeringInputs - request.id) } }
+        }
+    }
+    fun answerAsyncQuestion(item: TimelineItem, answers: Map<String, String>) {
+        val initial = mutable.value
+        val chat = initial.selectedChat ?: return
+        if (initial.connection != "Connected" || initial.sending || initial.uncertainSend || chat.archived ||
+            item.id in initial.answeredInputs || initial.timeline.none { it.id == item.id && it.questions == item.questions } ||
+            !validQuestionAnswers(item.questions, answers)) return
+        val reply = questionReply(item.questions, answers)
+        if (!mutable.compareAndSet(initial, initial.copy(sending = true, answeringInputs = initial.answeringInputs + item.id,
+                inputErrors = initial.inputErrors - item.id))) return
+        viewModelScope.launch(Dispatchers.IO) {
+            inputMutex.withLock {
+                var attempted = false
+                var acknowledged = false
+                try {
+                    val current = mutable.value
+                    check(current.signedIn && current.endpoint == initial.endpoint && current.username == initial.username) { "Reconnect before answering." }
+                    submitAsyncAnswer(initial, item, reply, rpc::call) { attempted = true }
+                    acknowledged = true
+                    mutable.update { it.copy(answeredInputs = it.answeredInputs + item.id, inputErrors = it.inputErrors - item.id) }
+                    if (mutable.value.selectedChat?.id == chat.id) loadThread(chat.id)
+                } catch (e: Exception) {
+                    if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                    if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                    else {
+                        val uncertain = uncertainDelivery(attempted, acknowledged, e)
+                        if (uncertain) uncertainChats.add(chat.id)
+                        mutable.update { it.copy(uncertainSend = if (it.selectedChat?.id == chat.id) it.uncertainSend || uncertain else it.uncertainSend,
+                            inputErrors = it.inputErrors + (item.id to if (uncertain) "Delivery could not be confirmed. Refresh and check chat history before trying again." else e.message ?: "Answer could not be sent."),
+                            notice = if (acknowledged) "Answer accepted. History refresh is temporarily unavailable." else it.notice) }
+                    }
+                } finally { mutable.update { it.copy(sending = false, answeringInputs = it.answeringInputs - item.id) } }
+            }
+        }
     }
     fun archive(chat: Chat) = action {
         val current = mutable.value

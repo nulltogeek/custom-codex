@@ -25,7 +25,8 @@ data class Chat(val id: String, val title: String, val preview: String, val cwd:
     val parentId: String? = null, val source: String = "", val updatedAt: Long = 0, val projectId: String? = null)
 data class TimelineItem(val id: String, val type: String, val text: String, val detail: String = "",
     val status: String = "", val changes: List<Change> = emptyList(), val turnId: String = "",
-    val phase: String = "", val turnStatus: String = "", val images: List<TimelineImage> = emptyList())
+    val phase: String = "", val turnStatus: String = "", val images: List<TimelineImage> = emptyList(),
+    val delivery: String = "", val questions: List<InputQuestion> = emptyList())
 data class TimelineImage(val source: String, val name: String = "Attached image")
 data class Change(val path: String, val diff: String)
 data class PendingInput(val id: String, val method: String, val params: JsonObject)
@@ -47,6 +48,8 @@ data class ScreenState(
     val catalogLoading: Boolean = false, val catalogError: String? = null, val catalogErrorArchived: Boolean? = null, val catalogRevision: Long = 0,
     val selectedChat: Chat? = null, val timeline: List<TimelineItem> = emptyList(),
     val pending: List<PendingInput> = emptyList(), val models: List<ModelChoice> = emptyList(),
+    val answeringInputs: Set<String> = emptySet(), val answeredInputs: Set<String> = emptySet(),
+    val inputErrors: Map<String, String> = emptyMap(),
     val selectedModel: String = "", val selectedEffort: String = "", val draft: String = "",
     val loading: Boolean = false, val refreshing: Boolean = false, val sending: Boolean = false, val notice: String? = null,
     val queuedMessages: List<QueuedMessage> = emptyList(), val pausedQueues: Set<String> = emptySet(), val queueBlocked: Boolean = false,
@@ -115,7 +118,8 @@ fun parseItem(raw: JsonObject, turnId: String = "", turnStatus: String = ""): Ti
     if (type == "functionCallOutput") text = readableContent(raw["output"])
     if (text.isEmpty() && type !in listOf("agentMessage", "userMessage")) text = raw.text("status").ifEmpty { type }
     return TimelineItem(raw.text("id"), type, text, raw.text("command").ifEmpty { raw.text("server").ifEmpty { raw.text("namespace").ifEmpty { raw.text("name") } } }, raw.text("status"), changes,
-        turnId = turnId, phase = raw.text("phase"), turnStatus = turnStatus, images = images)
+        turnId = turnId, phase = raw.text("phase"), turnStatus = turnStatus, images = images,
+        delivery = raw.text("delivery"), questions = if (type == "agentMessage") parseAsyncQuestions(raw) else emptyList())
 }
 
 // Decode text content blocks without exposing base64 media as pages of JSON.
