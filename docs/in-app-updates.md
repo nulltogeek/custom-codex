@@ -1,6 +1,6 @@
 # In-app APK updates
 
-APK 0.4.0 introduced in-app updates; 0.4.1 extended the download deadline for slow VPN links. Version 0.5.0 adds [compact chat, project and composer layouts](mobile-0.5.0.md). Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing updater users can install 0.7.4 from **Settings → App updates**.
+APK 0.4.0 introduced in-app updates; 0.4.1 extended the download deadline for slow VPN links. Version 0.5.0 adds [compact chat, project and composer layouts](mobile-0.5.0.md). Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing updater users can install 0.7.5 from **Settings → App updates**.
 
 ## On the phone
 
@@ -25,10 +25,15 @@ The build script runs Android tests/lint, builds debug/release APKs, copies the 
 To publish already-built APKs:
 
 ```bash
-node scripts/publish-app-update.mjs docs/release-notes/0.7.4.txt
+node scripts/publish-app-update.mjs docs/release-notes/0.7.5.txt
 ```
 
 Publishing verifies both APK signatures and actual package/version/minimum-SDK metadata using Android build-tools. It writes immutable APKs named by their SHA-256 and replaces each channel's manifest atomically. Future APK publications need no backend restart. The first updater deployment restarts the idle service to add these routes; that restart invalidates existing app login sessions.
+
+Installed apps discover an update only when its `versionCode` is greater than
+their own build number. Rebuilding an APK with the same number does not make it
+an update. The publisher rejects changed APKs with the same or lower build
+number and permits an identical release to be republished.
 
 The default publication directory is the repository's ignored `artifacts/updates/`. `CODEX_APP_UPDATE_DIRECTORY` can select another directory, but it must be configured identically for the server and publisher. `ANDROID_HOME`/`ANDROID_SDK_ROOT` select the publishing tools; the fallback is `.downloads/android-sdk`, build-tools 35.0.0. `CODEX_ANDROID_BUILD_TOOLS` can point directly to another compatible build-tools directory.
 
@@ -122,3 +127,11 @@ Projects, including empty lists. It preserves loaded pages and filters, rejects
 duplicate refreshes, and pauses pagination during refresh. See
 [the feature guide](mobile-0.7.4.md) and
 [release verification](mobile-0.7.4-verification.md). No backend restart is needed.
+
+## 0.7.5 conversation display and update discovery
+
+Version 0.7.5/code 13 releases the jump-to-latest button, final-reply display,
+one changes summary per finished turn and tappable full-screen image previews.
+See [the display guide](chat-display.md). The earlier development APK retained
+code 12 and was not published, so installed 0.7.4 apps could not discover it.
+This release increments the build number and publishes both channels.

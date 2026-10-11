@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { updateManifest, MAX_APK_BYTES } from '../bridge/app-updates.mjs';
+import { assertPublishableUpdate, updateManifest, MAX_APK_BYTES } from '../bridge/app-updates.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const directory = process.env.CODEX_APP_UPDATE_DIRECTORY ?? join(root, 'artifacts/updates');
@@ -36,12 +36,13 @@ for (const channel of ['release', 'debug']) {
       actual?.[3] !== apk.versionName || minSdk !== metadata.minSdkVersionForDexing || minSdk < 30)
     throw Error('APK contents do not match build metadata');
   const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const manifest = { applicationId: expectedId, versionCode: apk.versionCode, versionName: apk.versionName,
+    minSdk: metadata.minSdkVersionForDexing, sha256, size: bytes.length, notes };
+  if (existsSync(join(directory, channel + '.json'))) assertPublishableUpdate(updateManifest(directory, channel), manifest);
   const path = join(directory, sha256 + '.apk');
   if (existsSync(path)) {
     if (createHash('sha256').update(readFileSync(path)).digest('hex') !== sha256) throw Error('Published APK changed');
   } else writeFileSync(path, bytes, { flag: 'wx', mode: 0o644 });
-  const manifest = { applicationId: expectedId, versionCode: apk.versionCode, versionName: apk.versionName,
-    minSdk: metadata.minSdkVersionForDexing, sha256, size: bytes.length, notes };
   releases.push({ channel, manifest });
 }
 for (const { channel, manifest } of releases) {

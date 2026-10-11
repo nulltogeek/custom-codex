@@ -1,0 +1,5 @@
+Jump to the latest message with the down-arrow button when you scroll up.
+Chats show final replies instead of reasoning, progress messages and terminal output.
+Changed files appear once, after the final reply. Tap a file to inspect its diff.
+Tap an uploaded image in the composer or chat to open a full-screen preview.
+This release uses build 13 so installed 0.7.4 apps can discover and install it through App updates.

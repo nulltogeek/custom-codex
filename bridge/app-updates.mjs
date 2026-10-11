@@ -6,6 +6,13 @@ export const defaultUpdateDirectory = join(dirname(fileURLToPath(import.meta.url
 export const MAX_APK_BYTES = 128 * 1024 * 1024;
 const applications = { release: 'dev.nulltogeek.codexremote', debug: 'dev.nulltogeek.codexremote.debug' };
 
+export function assertPublishableUpdate(current, next) {
+  if (current.applicationId !== next.applicationId) throw Error('Cannot change the update channel application ID');
+  if (next.versionCode > current.versionCode) return;
+  if (next.versionCode === current.versionCode && next.sha256 === current.sha256 && next.versionName === current.versionName) return;
+  throw Error(`Increase versionCode above ${current.versionCode} before publishing a changed APK; installed apps cannot discover an update with the same or lower build number`);
+}
+
 export function updateManifest(directory, channel) {
   if (!Object.hasOwn(applications, channel)) throw Error('Invalid channel');
   const path = join(directory, channel + '.json'), stat = lstatSync(path);

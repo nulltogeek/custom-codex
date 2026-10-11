@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { updateManifest } from '../app-updates.mjs';
+import { assertPublishableUpdate, updateManifest } from '../app-updates.mjs';
 import { createHost } from '../host.mjs';
 import { Broker } from '../broker.mjs';
 
@@ -17,6 +17,15 @@ function fixture() {
   writeFileSync(join(directory, 'release.json'), JSON.stringify(manifest));
   return { directory, bytes, manifest };
 }
+test('publication requires a higher build number for changed APKs and prevents downgrades', () => {
+  const current = { applicationId: 'dev.nulltogeek.codexremote', versionCode: 12, versionName: '0.7.4', sha256: 'a'.repeat(64) };
+  assert.doesNotThrow(() => assertPublishableUpdate(current, { ...current }));
+  assert.doesNotThrow(() => assertPublishableUpdate(current, { ...current, versionCode: 13, versionName: '0.7.5', sha256: 'b'.repeat(64) }));
+  for (const change of [{ sha256: 'b'.repeat(64) }, { versionCode: 11 }, { versionName: '0.7.5' }]) {
+    assert.throws(() => assertPublishableUpdate(current, { ...current, ...change }), /Increase versionCode above 12/);
+  }
+  assert.throws(() => assertPublishableUpdate(current, { ...current, applicationId: 'different.app', versionCode: 13 }), /application ID/);
+});
 test('update metadata and immutable downloads use normal host authentication', async () => {
   const { directory, bytes, manifest } = fixture();
   const host = createHost({ broker: new Broker({ upstream() {}, desktop() {} }), token: 'test-update-token', port: 0, updateDirectory: directory });

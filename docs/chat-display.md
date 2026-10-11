@@ -18,7 +18,8 @@ from the authenticated host; embedded image history can also be displayed.
 Missing or unsupported images show an unavailable message. Image decoding is
 bounded to keep large photos from exhausting phone memory.
 
-The Android APK must be rebuilt and installed. Sent uploaded-image previews also
-require the updated bridge process, which adds the authenticated
-`GET /v1/attachments/image` endpoint. This change does not publish an app update
-or restart the running server.
+These changes are published as **0.7.5 / build 13** through **Settings → App
+updates**. Sent uploaded-image previews also require the updated bridge process,
+which adds the authenticated `GET /v1/attachments/image` endpoint. Publishing
+the APKs does not restart the running server. See
+[release verification](mobile-0.7.5-verification.md) for checks and limits.
