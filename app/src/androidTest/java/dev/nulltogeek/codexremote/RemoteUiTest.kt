@@ -294,6 +294,47 @@ class RemoteUiTest {
         compose.waitForIdle(); assertEquals(listOf(false, true), requests)
     }
 
+    @Test fun chatsPullToRefreshShowsProgressKeepsFiltersAndBlocksRepeatedPulls() {
+        val state = mutableStateOf(sample().copy(projectFilter = "p1", chats = sample().chats.take(20)))
+        var calls = 0
+        val vm = RemoteViewModel(compose.activity.application)
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { ChatsScreen(state.value, vm, approval = {}, refresh = {
+                calls++; state.value = state.value.copy(refreshing = true, loading = true)
+            }) }
+        } }
+        compose.onNodeWithTag("catalog-list").performTouchInput { swipeDown(startY = height * 0.2f, endY = height * 0.9f, durationMillis = 500) }
+        compose.waitUntil(10000) { calls == 1 }
+        compose.onNodeWithContentDescription("Refreshing list").assertIsDisplayed()
+        compose.onNodeWithText("Project 1", substring = false).assertIsDisplayed()
+        compose.onNodeWithTag("catalog-list").performTouchInput { swipeDown(startY = height * 0.2f, endY = height * 0.9f, durationMillis = 500) }
+        compose.waitForIdle(); assertEquals(1, calls)
+        compose.runOnIdle { state.value = state.value.copy(refreshing = false, loading = false,
+            chats = listOf(state.value.chats.first().copy(title = "Updated after pull")) + state.value.chats.drop(1)) }
+        compose.onNodeWithText("Updated after pull").assertIsDisplayed()
+        assertEquals("p1", state.value.projectFilter)
+        assertEquals(20, state.value.chats.size)
+    }
+
+    @Test fun projectsAndEmptyListsSupportPullRefreshButOfflinePullsDoNotSendRequests() {
+        val state = mutableStateOf(sample().copy(projects = emptyList(), connection = "Offline"))
+        var calls = 0
+        val vm = RemoteViewModel(compose.activity.application)
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { ProjectScreen(state.value, vm, refresh = {
+                calls++; state.value = state.value.copy(refreshing = true)
+            }) }
+        } }
+        compose.onNodeWithTag("project-list").performTouchInput { swipeDown(startY = height * 0.2f, endY = height * 0.9f, durationMillis = 500) }
+        compose.waitForIdle(); assertEquals(0, calls)
+        compose.runOnIdle { state.value = state.value.copy(connection = "Connected") }
+        compose.onNodeWithTag("project-list").performTouchInput { swipeDown(startY = height * 0.2f, endY = height * 0.9f, durationMillis = 500) }
+        compose.waitUntil(10000) { calls == 1 }
+        compose.onNodeWithContentDescription("Refreshing list").assertIsDisplayed()
+        compose.runOnIdle { state.value = state.value.copy(refreshing = false, projects = listOf(Project("new", "New project after pull", listOf("/new")))) }
+        compose.onNodeWithText("New project after pull").assertIsDisplayed()
+    }
+
     @Test fun nativeAppUpdateDownloadsAndVerifiesInstalledSigningIdentity() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val loginFile = File(context.filesDir, "integration-login.json")

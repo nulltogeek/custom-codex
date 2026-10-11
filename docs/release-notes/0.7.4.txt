@@ -1,0 +1,1 @@
+Pull down at the top of Chats or Projects to refresh. A spinner shows progress, repeated pulls are ignored while refreshing, and loaded chats and your selected filters remain in place. Empty lists support refresh too. Existing scroll pagination and the toolbar refresh button remain available.

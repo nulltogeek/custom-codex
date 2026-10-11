@@ -45,7 +45,7 @@ data class ScreenState(
     val selectedChat: Chat? = null, val timeline: List<TimelineItem> = emptyList(),
     val pending: List<PendingInput> = emptyList(), val models: List<ModelChoice> = emptyList(),
     val selectedModel: String = "", val selectedEffort: String = "", val draft: String = "",
-    val loading: Boolean = false, val sending: Boolean = false, val notice: String? = null,
+    val loading: Boolean = false, val refreshing: Boolean = false, val sending: Boolean = false, val notice: String? = null,
     val theme: String = "system", val diff: Change? = null, val page: String = "chats",
     val projectFilter: String? = null, val uncertainSend: Boolean = false,
     val writerConflict: Boolean = false,

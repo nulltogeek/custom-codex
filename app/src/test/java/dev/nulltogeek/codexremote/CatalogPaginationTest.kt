@@ -34,6 +34,7 @@ class CatalogPaginationTest {
         assertFalse(request.isCurrent(original.copy(catalogRevision = 5)))
         assertFalse(request.isCurrent(original.copy(searchTerm = "different")))
         assertFalse(request.isCurrent(original.copy(catalogLoading = true)))
+        assertFalse(request.isCurrent(original.copy(refreshing = true)))
         assertFalse(request.isCurrent(original.copy(connection = "Offline")))
     }
 
@@ -45,6 +46,19 @@ class CatalogPaginationTest {
         assertTrue(nextCatalogPage(failed, 0)!!.isCurrent(failed))
         assertEquals("Retry", catalogPageError(failed, false))
         assertNull(catalogPageError(failed, true))
+    }
+
+    @Test fun refreshRequiresALiveSessionAndCannotOverlapAnotherRefreshOrAction() {
+        val ready = state().copy(signedIn = true)
+        assertTrue(canRefreshHistory(ready))
+        assertFalse(canRefreshHistory(ready.copy(signedIn = false)))
+        assertFalse(canRefreshHistory(ready.copy(connection = "Offline")))
+        assertFalse(canRefreshHistory(ready.copy(connection = "Connecting")))
+        assertFalse(canRefreshHistory(ready.copy(loading = true)))
+        assertFalse(canRefreshHistory(ready.copy(refreshing = true)))
+        // A page fetch may be in progress; refresh invalidates its revision and
+        // waits on the catalogue mutex instead of silently ignoring the gesture.
+        assertTrue(canRefreshHistory(ready.copy(catalogLoading = true)))
     }
 
     @Test fun prefetchStartsNearTheBottomAndWaitsForMeasuredRows() {

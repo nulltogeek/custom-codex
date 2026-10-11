@@ -21,7 +21,7 @@ internal fun catalogPageRequest(state: ScreenState, archived: Boolean): CatalogP
     }
 
 internal fun CatalogPageRequest.isCurrent(state: ScreenState): Boolean =
-    state.connection == "Connected" && !state.catalogLoading && this == catalogPageRequest(state, archived)
+    state.connection == "Connected" && !state.catalogLoading && !state.refreshing && this == catalogPageRequest(state, archived)
 
 internal fun catalogPageError(state: ScreenState, archived: Boolean): String? =
     state.catalogError.takeIf { state.catalogErrorArchived == null || state.catalogErrorArchived == archived }

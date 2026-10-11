@@ -237,7 +237,21 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun effort(value: String) { mutable.update { it.copy(selectedEffort = value) } }
     fun noticeDismiss() { mutable.update { it.copy(notice = null) } }
     fun showDiff(change: Change?) { mutable.update { it.copy(diff = change) } }
-    fun refresh() = action { refreshAll(); mutable.update { if (it.historyAvailable) { it.selectedChat?.id?.let(uncertainChats::remove); it.copy(uncertainSend = false) } else it } }
+    fun refresh() {
+        // Claim the refresh before launching IO so a second gesture/button tap
+        // cannot start another request while the first coroutine is queued.
+        while (true) {
+            val current = mutable.value
+            if (!canRefreshHistory(current)) return
+            if (mutable.compareAndSet(current, current.copy(refreshing = true))) break
+        }
+        action {
+            try {
+                refreshAll()
+                mutable.update { if (it.historyAvailable) { it.selectedChat?.id?.let(uncertainChats::remove); it.copy(uncertainSend = false) } else it }
+            } finally { mutable.update { it.copy(refreshing = false) } }
+        }
+    }
 
     private suspend fun refreshAll() {
         mutable.update { it.copy(catalogRevision = it.catalogRevision + 1, catalogError = null, catalogErrorArchived = null, activeCursor = null, archivedCursor = null) }
