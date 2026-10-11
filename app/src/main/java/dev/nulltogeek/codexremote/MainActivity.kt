@@ -430,25 +430,26 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     var visibleLimit by rememberSaveable(item.id) { mutableIntStateOf(6000) }
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
     val user = item.type == "userMessage"; val tool = item.type !in listOf("userMessage", "agentMessage", "finalChanges", "error")
+    val finalChanges = item.type == "finalChanges"
     val label = if (user) "YOU" else if (item.type == "finalChanges") "CHANGES" else if (item.type == "error") "ERROR" else if (!tool) "CODEX" else if (item.type == "commandExecution") "COMMAND" else item.type.uppercase()
     Surface(color = if (user) MaterialTheme.colorScheme.surfaceVariant else if (tool) MaterialTheme.colorScheme.surface else Color.Transparent, shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.fillMaxWidth().padding(if (tool || user) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (tool) Surface(onClick = { expanded = !expanded }, modifier = Modifier.testTag("command:${item.id}"), color = Color.Transparent) {
+            if (tool || finalChanges) Surface(onClick = { expanded = !expanded }, modifier = Modifier.testTag("${if (finalChanges) "changes" else "command"}:${item.id}"), color = Color.Transparent) {
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                         Text(item.detail.ifBlank { item.text }.lineSequence().firstOrNull().orEmpty().take(160), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-                        Text(commandStatus(item), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (tool) Text(commandStatus(item), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (expanded) "Collapse $label" else "Expand $label")
+                    Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (finalChanges) { if (expanded) "Collapse changes" else "Expand changes" } else if (expanded) "Collapse $label" else "Expand $label")
                 }
             } else Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-            if (!tool || expanded) {
+            if ((!tool && !finalChanges) || expanded) {
                 Column(if (tool) Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()) else Modifier,
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (item.detail.isNotBlank()) SelectionContainer { Text(item.detail, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
                 val visible = item.text.take(visibleLimit)
-                if (visible.isNotBlank()) {
+                if (visible.isNotBlank() && !finalChanges) {
                     if (!tool && !user) MarkdownView(visible)
                     else if (item.type == "commandExecution") CodeBlock(item.text, "terminal", collapsible = false)
                     else SelectionContainer { Text(visible, style = if (tool) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, fontFamily = if (tool) FontFamily.Monospace else FontFamily.Default) }

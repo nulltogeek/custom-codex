@@ -276,8 +276,12 @@ class RemoteUiTest {
         compose.runOnIdle { state.value = state.value.copy(activeTurnId = "", selectedChat = state.value.selectedChat?.copy(status = "idle"),
             timeline = state.value.timeline.map { it.copy(turnStatus = "completed") }) }
         compose.onNodeWithText("1 changed file").assertIsDisplayed()
+        compose.onNodeWithText("app.kt").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Expand changes").performClick()
         compose.onNodeWithText("app.kt").assertIsDisplayed().performClick()
         compose.runOnIdle { assertEquals(Change("app.kt", "+fixed"), opened) }
+        compose.onNodeWithContentDescription("Collapse changes").performClick()
+        compose.onNodeWithText("app.kt").assertDoesNotExist()
     }
 
     @Test fun cataloguePrefetchesAtTheEndAndErrorsWaitForRetry() {

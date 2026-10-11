@@ -8,8 +8,9 @@ status and approval/input buttons remain available while work is in progress.
 Older messages without a message phase use the last assistant reply from each
 finished turn.
 
-Each finished turn has one changes summary below its final reply. Tap a file to
-inspect its diff. When the server supplies a cumulative turn diff, it replaces
+Each finished turn has one collapsed changes summary below its final reply.
+Expand the summary to see its files, then tap a file to inspect its diff.
+Collapse the summary to hide its files again. When the server supplies a cumulative turn diff, it replaces
 the intermediate patches and survives history refreshes and local cached reopen.
 Older history without a cumulative diff groups saved patches by file in one
 summary.
