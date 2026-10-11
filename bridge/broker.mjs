@@ -9,7 +9,7 @@ export const HUMAN_REQUESTS = new Set([
 const PHONE_METHODS = new Set([
   'thread/list', 'thread/read', 'thread/loaded/list', 'thread/turns/list',
   'thread/items/list', 'thread/start', 'thread/resume', 'thread/fork',
-  'thread/name/set', 'thread/archive', 'thread/unarchive', 'thread/metadata/update',
+  'thread/name/set', 'thread/archive', 'thread/unarchive', 'thread/delete', 'thread/metadata/update',
   'turn/start', 'turn/steer', 'turn/interrupt', 'model/list',
   'account/read', 'account/rateLimits/read', 'review/start',
 ]);
@@ -91,6 +91,9 @@ export class Broker {
             (method === 'account/read' && params.refreshToken === true) ||
             (method === 'thread/metadata/update' && Object.keys(params).some(k => !['threadId', 'isPinned', 'projectId'].includes(k)))) {
           this.error(client, id, -32602, 'Host policy and configuration cannot be overridden by the phone'); return;
+        }
+        if (method === 'thread/delete' && (typeof params.threadId !== 'string' || !params.threadId || Object.keys(params).some(k => k !== 'threadId'))) {
+          this.error(client, id, -32602, 'Delete requires only a threadId'); return;
         }
         if (!this.ready) { this.error(client, id, -32002, 'Codex backend is not initialized'); return; }
         try { forwardedParams = mobileOptions(method, params, this.threadModels.get(params.threadId)); }

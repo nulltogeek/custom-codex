@@ -87,6 +87,7 @@ class LocalStore(private val context: Context) {
         WireJson.parseToJsonElement(prefs.getString("attachments:$id", "[]").orEmpty()).jsonArray.map { parseAttachment(it.jsonObject) }
     } catch (_: Exception) { emptyList() }
     fun attachments(id: String, value: List<Attachment>) { prefs.edit { putString("attachments:$id", JsonArray(value.map { it.toJson() }).toString()) } }
+    fun forgetChat(id: String) { prefs.edit { remove("draft:$id"); remove("attachments:$id"); remove("mode:$id"); remove("access:$id") } }
     fun draft(id: String): String = synchronized(prefs) { prefs.getString("draft:$id", "").orEmpty() }
     fun draft(id: String, text: String) { synchronized(prefs) { prefs.edit { putString("draft:$id", text) } } }
     fun clearSentDraft(id: String, sentText: String): Boolean = synchronized(prefs) {

@@ -76,7 +76,8 @@ class LibraryUiTest {
                 archived.copy(id = "active", title = "Active conversation", archived = false))))
         val vm = RemoteViewModel(compose.activity.application)
         var restore: Chat? = null
-        render { ChatsScreen(state.value, vm, approval = {}, archivedOnly = true, archive = { restore = it }) }
+        var delete: Chat? = null
+        render { ChatsScreen(state.value, vm, approval = {}, archivedOnly = true, archive = { restore = it }, delete = { delete = it }) }
         compose.onNodeWithText("Archived chats").assertIsDisplayed()
         compose.onNodeWithContentDescription("Search archived chats").assertIsDisplayed()
         compose.onNodeWithText("Recent").assertDoesNotExist()
@@ -84,6 +85,8 @@ class LibraryUiTest {
         compose.onNodeWithText("Archived agent").assertIsDisplayed()
         compose.onNodeWithText("Active conversation").assertDoesNotExist()
         compose.onNodeWithText("Other project archive").assertDoesNotExist()
+        compose.onAllNodesWithText("Delete")[0].performClick()
+        compose.runOnIdle { assertEquals(archived, delete) }
         compose.onNodeWithTag("archive-swipe:archive").performTouchInput { swipeRight() }
         compose.waitUntil(10000) { restore != null }
         assertEquals(archived, restore)
@@ -122,6 +125,9 @@ class LibraryUiTest {
         compose.onNodeWithTag("nav-archived").assertIsDisplayed().performClick()
         compose.onNodeWithTag("nav-archived").assertIsSelected()
         compose.onNodeWithText("Saved conversation").performClick()
+        compose.onNodeWithContentDescription("Delete chat").performClick()
+        compose.onNodeWithText("Delete this chat permanently?").assertIsDisplayed()
+        compose.onNodeWithText("Cancel").performClick()
         compose.onNodeWithContentDescription("Restore chat").performClick()
         compose.onNodeWithText("Restore this chat?").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()

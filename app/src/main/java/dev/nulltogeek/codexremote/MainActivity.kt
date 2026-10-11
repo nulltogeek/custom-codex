@@ -114,6 +114,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 @Composable fun RemoteApp(state: ScreenState, vm: RemoteViewModel) {
     var approval by remember { mutableStateOf<PendingInput?>(null) }
     var confirmArchive by remember { mutableStateOf<Chat?>(null) }
+    var confirmDelete by remember { mutableStateOf<Chat?>(null) }
     val pending = approval?.let { candidate -> state.pending.find { it.id == candidate.id } }
     BackHandler(state.diff != null || state.selectedChat != null) {
         if (state.diff != null) vm.showDiff(null) else vm.page(state.page)
@@ -134,6 +135,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     IconButton(onClick = { vm.refresh() }, enabled = canRefreshHistory(state)) { Icon(Icons.Outlined.Refresh, "Refresh history") }
                     state.selectedChat?.let { chat ->
                         FavoriteButton(state.favoriteChats.any { it.id == chat.id }, "chat ${chat.title}") { vm.favorite(chat) }
+                        if (chat.archived) IconButton(onClick = { confirmDelete = chat }, enabled = canDeleteChat(state, chat)) { Icon(Icons.Outlined.DeleteOutline, "Delete chat") }
                         IconButton(onClick = { confirmArchive = chat }, enabled = canArchive(state, chat)) { Icon(if (chat.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, if (chat.archived) "Restore chat" else "Archive chat") }
                     }
                 }
@@ -177,12 +179,16 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 screen.startsWith("chat:") && state.selectedChat != null -> key(state.selectedChat.id) { Conversation(state, vm) { approval = it } }
                 screen == "projects" -> ProjectScreen(state, vm)
                 screen == "settings" -> SettingsScreen(state, vm)
-                screen == "archived" -> ChatsScreen(state, vm, approval = { approval = it }, archive = { confirmArchive = it }, archivedOnly = true)
+                screen == "archived" -> ChatsScreen(state, vm, approval = { approval = it }, archive = { confirmArchive = it }, delete = { confirmDelete = it }, archivedOnly = true)
                 else -> ChatsScreen(state, vm, approval = { approval = it }, archive = { confirmArchive = it })
             } }
         }
     }
     if (pending != null) ApprovalDialog(pending, state.loading, onDismiss = { approval = null }, onAnswer = { result -> vm.answer(pending, result) })
+    confirmDelete?.let { chat -> AlertDialog(onDismissRequest = { confirmDelete = null }, title = { Text("Delete this chat permanently?") },
+        text = { Text("Delete “${chat.title}” from your computer and this phone. This cannot be undone. Remove queued messages before deleting.") },
+        confirmButton = { TextButton(onClick = { vm.deleteChat(chat); confirmDelete = null }, enabled = canDeleteChat(state, state.chats.find { it.id == chat.id } ?: chat)) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+        dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } }) }
     confirmArchive?.let { chat -> AlertDialog(onDismissRequest = { confirmArchive = null }, title = { Text(if (chat.archived) "Restore this chat?" else "Archive this chat?") },
         text = { Text(if (chat.archived) "Return this conversation to your active chats on both devices." else "Move this conversation to archived history on both devices. Codex may also archive its child-agent chats.") },
         confirmButton = { TextButton(onClick = { vm.archive(chat); confirmArchive = null }) { Text(if (chat.archived) "Restore" else "Archive") } },
@@ -211,7 +217,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 }
 
 @Composable internal fun ChatsScreen(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit, loadMore: (Boolean) -> Unit = { vm.loadMore(it) },
-    archive: (Chat) -> Unit = {}, favorite: (Chat) -> Unit = { vm.favorite(it) }, refresh: () -> Unit = { vm.refresh() }, archivedOnly: Boolean = false) {
+    archive: (Chat) -> Unit = {}, favorite: (Chat) -> Unit = { vm.favorite(it) }, refresh: () -> Unit = { vm.refresh() }, archivedOnly: Boolean = false, delete: (Chat) -> Unit = {}) {
     val query = state.searchTerm; var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val tab = if (archivedOnly) 1 else selectedTab
     val project = state.projects.find { it.id == state.projectFilter }
@@ -264,7 +270,13 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             items(list, key = { it.id }, contentType = { "chat" }) { chat ->
                 val p = state.projects.find { it.id == (state.assignments[chat.id] ?: chat.projectId) } ?: state.projects.find { chat.cwd in it.roots }
                 SwipeArchiveRow(chat, canArchive(state, chat), archive = { archive(chat) }) {
-                    ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) })
+                    Column {
+                        ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) })
+                        if (archivedOnly) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            TextButton(onClick = { archive(chat) }, enabled = canArchive(state, chat)) { Icon(Icons.Outlined.Unarchive, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Restore") }
+                            TextButton(onClick = { delete(chat) }, enabled = canDeleteChat(state, chat)) { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Delete") }
+                        }
+                    }
                 }
             }
             if (page != null) item(key = "catalog-footer") {

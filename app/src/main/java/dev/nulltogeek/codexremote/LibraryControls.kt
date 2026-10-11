@@ -20,6 +20,19 @@ import androidx.compose.ui.unit.dp
 internal fun canArchive(state: ScreenState, chat: Chat): Boolean = state.connection == "Connected" && !state.loading &&
     !state.sending && chat.status != "active" && state.pending.none { it.params.text("threadId") == chat.id }
 
+internal fun canDeleteChat(state: ScreenState, chat: Chat): Boolean = chat.archived && canArchive(state, chat) &&
+    state.queuedMessages.none { it.chatId == chat.id }
+
+internal fun withoutDeletedChat(state: ScreenState, id: String): ScreenState {
+    val selected = state.selectedChat?.id == id
+    return state.copy(chats = state.chats.filterNot { it.id == id }, favoriteChats = state.favoriteChats.filterNot { it.id == id },
+        assignments = state.assignments - id, pending = state.pending.filterNot { it.params.text("threadId") == id },
+        selectedChat = if (selected) null else state.selectedChat, timeline = if (selected) emptyList() else state.timeline,
+        diff = if (selected) null else state.diff, draft = if (selected) "" else state.draft,
+        attachments = if (selected) emptyList() else state.attachments,
+        page = if (selected) "archived" else state.page, historyRevision = state.historyRevision + if (selected) 1 else 0)
+}
+
 @Composable internal fun FavoriteButton(favorite: Boolean, label: String, onClick: () -> Unit) {
     IconButton(onClick) {
         Icon(if (favorite) Icons.Filled.Star else Icons.Outlined.StarOutline,

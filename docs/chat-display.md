@@ -46,3 +46,10 @@ on its row, to review the restore confirmation. Back returns to Archived.
 
 Stop sits beside Send. Sending during work queues the next message; see
 [message queue controls and delivery behavior](message-queue.md).
+
+Archived chats have Restore and Delete actions. Delete asks for confirmation and calls
+Codex's `thread/delete` API; it requires a connected, idle archived chat with no pending
+input or queued messages. The app removes cached history, favorites and drafts only
+after confirmation from the server (or a `thread/deleted` event). An uncertain response
+asks the user to refresh rather than automatically retrying. The host bridge must be
+updated to allow this API; no direct database or filesystem deletion is used.

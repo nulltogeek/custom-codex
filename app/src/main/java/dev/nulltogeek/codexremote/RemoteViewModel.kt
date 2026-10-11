@@ -33,6 +33,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var cachedThreads = buildJsonObject {}
     private var cachedList = JsonArray(emptyList())
     private var cachedInventory = buildJsonObject {}
+    private val deletedChats = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val uncertainChats = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val sourceKinds = listOf("cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown")
 
@@ -283,7 +284,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             if (mutable.value.catalogRevision != revision) return@withLock
             val active = listPage(false, null, query); val archived = listPage(true, null, query)
             if (mutable.value.catalogRevision != revision) return@withLock
-            cachedList = refreshCatalogRows(cachedList, active, archived)
+            cachedList = JsonArray(refreshCatalogRows(cachedList, active, archived).filterNot { it.jsonObject.text("id") in deletedChats })
             mutable.update { if (it.catalogRevision != revision) it else it.copy(chats = mergeCatalogChats(emptyList(), cachedList.map { r -> parseChat(r.jsonObject, r.jsonObject.text("cachedArchived") == "true") }),
                 activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }) }
         }
@@ -321,7 +322,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 try {
                     val page = listPage(archived, request.cursor, request.query)
                     if (mutable.value.catalogRevision != request.revision) return@withLock
-                    val raw = catalogRows(page, archived)
+                    val raw = catalogRows(page, archived).filterNot { it.text("id") in deletedChats }
                     cachedList = mergeCatalogRows(cachedList, raw)
                     mutable.update { if (it.catalogRevision != request.revision) it else it.copy(chats = mergeCatalogChats(it.chats, raw.map { r -> parseChat(r, archived) }),
                         activeCursor = if (!archived) page.text("nextCursor").takeIf { next -> next.isNotEmpty() && next != request.cursor } else it.activeCursor,
@@ -336,6 +337,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
     fun open(chat: Chat) {
+        if (chat.id in deletedChats) return
         olderJob?.cancel()
         synchronized(uploadJobs) { uploadJobs.values.forEach { it.cancel() }; uploadJobs.clear() }
         val history = cachedThreads[chat.id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
@@ -352,6 +354,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 loaded.thread.array("turns").find { it.jsonObject.text("id") == turn.jsonObject.text("id") } ?: turn
             }))) else loaded.thread
         val raw = retainFinalDiffs(mergedThread, mutable.value.timeline.takeIf { mutable.value.selectedChat?.id == id }.orEmpty(), previous)
+        if (id in deletedChats) return
         if (loaded.authoritative || !cachedThreads.containsKey(id)) cachedThreads = buildJsonObject {
             cachedThreads.entries.toList().takeLast(7).forEach { (k, v) -> put(k, v) }; put(id, raw)
         }
@@ -668,13 +671,43 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         mutable.update { it.copy(favoriteChats = it.favoriteChats.map { c -> if (c.id == chat.id) c.copy(archived = !live.archived) else c }) }
         saveFavorites(); refreshAll()
     }
+    fun deleteChat(chat: Chat) {
+        if (!canDeleteChat(mutable.value, chat)) return
+        action {
+            val current = mutable.value
+            val live = current.chats.find { it.id == chat.id } ?: current.selectedChat?.takeIf { it.id == chat.id } ?: chat
+            check(live.archived && current.connection == "Connected" && !current.sending &&
+                current.queuedMessages.none { it.chatId == chat.id } && current.pending.none { it.params.text("threadId") == chat.id }) {
+                "Finish work and remove queued messages before deleting this archived chat."
+            }
+            val metadata = rpc.call("thread/read", buildJsonObject { put("threadId", chat.id); put("includeTurns", false) }).obj("thread")
+            check(metadata.obj("status").text("type") != "active") { "Finish the running task before deleting this chat." }
+            try { rpc.call("thread/delete", jsonObject("threadId" to chat.id)) }
+            catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (e is RpcException) throw IllegalStateException("Chat was not deleted: ${e.message}. Your host must support chat deletion.")
+                throw IllegalStateException("Deletion could not be confirmed. Refresh archived history before trying again.")
+            }
+            forgetDeletedChat(chat.id)
+        }
+    }
+    private fun forgetDeletedChat(id: String) {
+        deletedChats.add(id)
+        mutable.update { withoutDeletedChat(it, id) }
+        uncertainChats.remove(id); store.forgetChat(id)
+        cachedThreads = JsonObject(cachedThreads.filterKeys { it != id })
+        cachedList = JsonArray(cachedList.filterNot { it.jsonObject.text("id") == id })
+        saveFavorites(); saveCache()
+    }
     private fun applyEvents(events: List<JsonObject>) {
+        events.filter { it.text("method") == "thread/deleted" && (it.text("_bridgeEpoch").isEmpty() || it.text("_bridgeEpoch") == lastEpoch) }.forEach { forgetDeletedChat(it.obj("params").text("threadId")) }
         var completedChat: String? = null
         mutable.update { before ->
             var state = before
             for (event in events) {
                 if (lastEpoch.isNotEmpty() && event.text("_bridgeEpoch").isNotEmpty() && event.text("_bridgeEpoch") != lastEpoch) continue
                 val method = event.text("method"); val p = event.obj("params"); val threadId = p.text("threadId")
+                if (threadId in deletedChats) continue
                 val sequence = (event["_bridgeSequence"] as? JsonPrimitive)?.longOrNull ?: 0
                 state = state.copy(favoriteChats = state.favoriteChats.map { chat -> if (chat.id != threadId) chat else when (method) {
                     "thread/name/updated" -> chat.copy(title = p.text("threadName").ifEmpty { p.text("name").ifEmpty { chat.title } })

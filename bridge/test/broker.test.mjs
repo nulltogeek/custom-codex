@@ -131,3 +131,17 @@ test('host allowed decisions and typed form answers are validated before resolvi
   h.broker.accept('phone', { id: 5, method: 'bridge/respond', params: { requestId: request.requestId, result: { action: 'accept', content: { count: 2 } } } });
   assert.equal(h.broker.snapshot().pendingRequests.length, 0);
 });
+
+test('phone deletion uses the upstream API, rejects extra fields and never retries after disconnect', () => {
+  const h = harness(); h.initialize(); const before = h.upstream.length;
+  for (const params of [{}, { threadId: '' }, { threadId: 'archive', path: '/tmp/chat' }]) {
+    h.broker.accept('phone', { id: 50, method: 'thread/delete', params });
+    assert.equal(h.phone.at(-1).error.code, -32602);
+  }
+  assert.equal(h.upstream.length, before);
+  h.broker.accept('phone', { id: 51, method: 'thread/delete', params: { threadId: 'archive' } });
+  const request = h.upstream.at(-1);
+  assert.equal(request.method, 'thread/delete'); assert.deepEqual(request.params, { threadId: 'archive' });
+  h.broker.removeClient('phone'); h.broker.receive({ id: request.id, result: {} });
+  assert.equal(h.upstream.length, before + 1); assert.equal(h.broker.requests.size, 0);
+});
