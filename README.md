@@ -1,14 +1,14 @@
 # Codex Remote for Android
 
-A native Android 11+ client for a Codex app-server on your Linux machine. Supports chats, projects, streaming, model controls, approvals, terminal output and diffs, with formatted code, file/image attachments, coding/conversation modes, access presets, message queues with editing and reordering, message copy controls, a command activity heartbeat, favorites, right-swipe archive, a dedicated Archived section, password changes, five color accents, optional screen transitions and in-app APK updates.
+A native Android 11+ client for a Codex app-server on your Linux machine. Supports chats, projects, streaming, model controls, approvals, terminal output and diffs, with formatted code, file/image attachments, coding/conversation modes, access presets, message queues with editing and reordering, message copy controls, a command activity heartbeat, favorites, right-swipe archive, sidebar navigation, archived chat restore and confirmed deletion, task completion notifications, password changes, five color accents, optional screen transitions and in-app APK updates.
 
 ## Host setup
 
 The deployed server runs on your own Linux machine under `codex-remote.service`, using `/home/nulltogeek/.codex/config.toml` and the installed Codex 0.159.2 binary. The desktop can be closed. Your machine must stay awake with WireGuard connected.
 
-The APK connects to **https://codex.geeksun.ir** over your private WireGuard network. Existing Nginx on `79.175.177.57` terminates HTTPS/WSS and forwards to `192.168.1.2:8787`. Sign in with username **nulltogeek** and the initial password in the owner-only `~/.local/share/custom-codex/initial-login.json` file; view it locally with `vim`. After changing your password in Settings, use the new password; the initial reference is no longer current. The app encrypts its session using Android Keystore and does not store the password. No pairing token entry is required. Install the 0.7.7 APK once, or upgrade through Settings → App updates if you already have the updater.
+The APK connects to **https://codex.geeksun.ir** over your private WireGuard network. Existing Nginx on `79.175.177.57` terminates HTTPS/WSS and forwards to `192.168.1.2:8787`. Sign in with username **nulltogeek** and the initial password in the owner-only `~/.local/share/custom-codex/initial-login.json` file; view it locally with `vim`. After changing your password in Settings, use the new password; the initial reference is no longer current. The app encrypts its session using Android Keystore and does not store the password. No pairing token entry is required. Install the 0.7.8 APK once, or upgrade through Settings → App updates if you already have the updater.
 
-Read [the message queue guide](docs/message-queue.md), [the chat display and Archived section guide](docs/chat-display.md), [favorites, swipe archive and password changes](docs/mobile-0.7.0.md), [the 0.6.0 chat loading guide](docs/mobile-0.6.0.md), [the compact 0.5.0 layout guide](docs/mobile-0.5.0.md), [in-app updates](docs/in-app-updates.md), [the 0.3.0 feature guide](docs/mobile-0.3.0.md), [username/password login](docs/username-password-login.md) and [the deployed WireGuard setup and recovery guide](docs/local-wireguard-deployment.md) first. [Standalone runtime details](docs/standalone-server.md) cover installation on another host. Node.js 22.13+ is required. The historical desktop-sharing launcher still uses the earlier token protocol described in [the desktop runbook](docs/runbook.md).
+Read [task completion notifications](docs/task-notifications.md), [the message queue guide](docs/message-queue.md), [the chat display and Archived section guide](docs/chat-display.md), [favorites, swipe archive and password changes](docs/mobile-0.7.0.md), [the 0.6.0 chat loading guide](docs/mobile-0.6.0.md), [the compact 0.5.0 layout guide](docs/mobile-0.5.0.md), [in-app updates](docs/in-app-updates.md), [the 0.3.0 feature guide](docs/mobile-0.3.0.md), [username/password login](docs/username-password-login.md) and [the deployed WireGuard setup and recovery guide](docs/local-wireguard-deployment.md) first. [Standalone runtime details](docs/standalone-server.md) cover installation on another host. Node.js 22.13+ is required. The historical desktop-sharing launcher still uses the earlier token protocol described in [the desktop runbook](docs/runbook.md).
 
 Standalone and ordinary desktop processes share saved configuration/history, while each owns its running turns and approvals. Use the server's connected clients to control work started on the server.
 
@@ -61,3 +61,8 @@ No cloud-chat integration or automatic prompt retries are included. Rerun protoc
 
 For selected files/images missing after the Android picker, update to 0.7.2.
 See [picker recovery and visible upload status](docs/mobile-0.7.2.md).
+
+The sidebar contains Chats, Archived, Projects and Settings. Archived chats offer
+Restore and confirmed Delete; update and restart the host bridge to allow deletion.
+Enable completion alerts in Settings; see [task notifications](docs/task-notifications.md)
+for background monitoring and Android limits.

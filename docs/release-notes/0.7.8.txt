@@ -1,0 +1,4 @@
+Archived chats now offer Restore and Delete. Delete asks for confirmation and requires an idle archived chat with no pending requests or queued messages. The computer's bridge must be updated and restarted to enable deletion.
+The navigation menu is now a sidebar with Chats, Archived, Projects and Settings.
+Enable task completion notifications in Settings. Successful tasks alert even when another chat is open; tap an alert to open its chat.
+Background notifications use a quiet monitoring notification. Android can pause monitoring; reopening the app resumes it. Failed or stopped tasks do not produce success alerts.

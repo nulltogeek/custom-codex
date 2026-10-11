@@ -39,7 +39,7 @@ When you scroll up, a down-arrow button appears at the bottom right. Tap it to
 return to the latest message and resume following new replies. The button keeps
 an accessible “Jump to latest” label without visible text.
 
-Open **Archived** in bottom navigation to browse archived chats, including agent
+Open **Archived** in the sidebar to browse archived chats, including agent
 chats. Search and project filters apply to this section, and older archived
 pages load as you scroll. Open a chat and tap **Restore chat**, or swipe right
 on its row, to review the restore confirmation. Back returns to Archived.
