@@ -75,13 +75,22 @@ class RpcClient {
     suspend fun upload(name: String, mimeType: String, bytes: ByteArray): Attachment = withContext(Dispatchers.IO) {
         require(bytes.isNotEmpty() && bytes.size <= 20 * 1024 * 1024) { "Select a non-empty file up to 20 MB" }
         val body = bytes.toRequestBody(mimeType.toMediaType())
-        http.newBuilder().writeTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
+        val call = http.newBuilder().writeTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
             .newCall(Request.Builder().url(endpoint + "/v1/attachments").header("Authorization", "Bearer $token")
-                .header("X-File-Name", URLEncoder.encode(name, "UTF-8").replace("+", "%20")).post(body).build()).execute().use {
-                if (it.code == 401) throw SessionExpiredException()
-                if (!it.isSuccessful) throw IOException(if (it.code == 413) "File is larger than 20 MB" else "Attachment upload failed (HTTP ${it.code})")
-                parseAttachment(WireJson.parseToJsonElement(it.body?.string() ?: "{}").jsonObject)
-            }
+                .header("X-File-Name", URLEncoder.encode(name, "UTF-8").replace("+", "%20")).post(body).build())
+        suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) { continuation.resumeWith(Result.failure(e)) }
+                override fun onResponse(call: Call, response: Response) {
+                    continuation.resumeWith(runCatching { response.use {
+                        if (it.code == 401) throw SessionExpiredException()
+                        if (!it.isSuccessful) throw IOException(if (it.code == 413) "File is larger than 20 MB" else "Attachment upload failed (HTTP ${it.code})")
+                        parseAttachment(WireJson.parseToJsonElement(it.body?.string() ?: "{}").jsonObject)
+                    } })
+                }
+            })
+        }
     }
     suspend fun downloadAppUpdate(update: AppUpdate, directory: File, progress: (Int) -> Unit): File = withContext(Dispatchers.IO) {
         // Keep session headers on this configured host; update metadata cannot redirect downloads.

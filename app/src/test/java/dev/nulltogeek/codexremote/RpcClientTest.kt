@@ -61,6 +61,20 @@ class RpcClientTest {
         }
     }
 
+    @Test fun cancellingUploadStopsWaitingForTheServerAndNeverReturnsAnAttachment() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE))
+            val rpc = RpcClient(); rpc.configure("http://127.0.0.1:${server.port}", "s".repeat(43))
+            var delivered = false
+            val upload = launch(Dispatchers.IO) { rpc.upload("cancel.txt", "text/plain", "content".toByteArray()); delivered = true }
+            assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+            withTimeout(2000) { upload.cancelAndJoin() }
+            assertFalse(delivered); assertTrue(upload.isCancelled)
+            rpc.close()
+        }
+    }
+
     @Test fun usernamePasswordLoginUsesJsonAndSessionForLaterRequests() = runBlocking {
         MockWebServer().use { server ->
             server.start()

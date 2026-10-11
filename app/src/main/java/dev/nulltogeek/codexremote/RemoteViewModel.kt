@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.ByteArrayOutputStream
+import androidx.core.graphics.scale
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
@@ -20,6 +21,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var reconnect: Job? = null
     private var searchJob: Job? = null
     private var updateJob: Job? = null
+    private var olderJob: Job? = null
+    private val catalogMutex = kotlinx.coroutines.sync.Mutex()
+    private val uploadJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
     private var lastUpdateCheck = 0L
     @Volatile private var foreground = false
     @Volatile private var lastEpoch = ""
@@ -91,7 +95,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         connectIfForeground()
     }
     private fun clearSession(notice: String? = null) {
-        updateJob?.cancel()
+        updateJob?.cancel(); olderJob?.cancel()
+        synchronized(uploadJobs) { uploadJobs.values.forEach { it.cancel() }; uploadJobs.clear() }
         rpc.close(); store.signOut()
         mutable.update { ScreenState(endpoint = store.endpoint, username = store.username, theme = it.theme, accent = it.accent, motion = it.motion, notice = notice) }
     }
@@ -169,14 +174,15 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun page(value: String) { mutable.update { it.copy(page = value, selectedChat = null, diff = null) } }
     fun filterProject(id: String?) { mutable.update { it.copy(page = "chats", projectFilter = id, selectedChat = null) } }
     fun search(value: String) {
-        mutable.update { it.copy(searchTerm = value) }; searchJob?.cancel()
+        mutable.update { it.copy(searchTerm = value, catalogRevision = it.catalogRevision + 1, catalogError = null, activeCursor = null, archivedCursor = null) }; searchJob?.cancel()
+        val revision = mutable.value.catalogRevision
         if (rpc.status.value != "Connected") return
         searchJob = viewModelScope.launch(Dispatchers.IO) {
             delay(300)
             try {
                 val active = listPage(false, null, value); val archived = listPage(true, null, value)
-                if (mutable.value.searchTerm != value) return@launch
-                mutable.update { it.copy(chats = active.array("data").map { r -> parseChat(r.jsonObject) } + archived.array("data").map { r -> parseChat(r.jsonObject, true) },
+                if (mutable.value.catalogRevision != revision) return@launch
+                mutable.update { if (it.catalogRevision != revision) it else it.copy(chats = active.array("data").map { r -> parseChat(r.jsonObject) } + archived.array("data").map { r -> parseChat(r.jsonObject, true) },
                     activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }) }
             } catch (e: Exception) { if (e is CancellationException) throw e; mutable.update { it.copy(notice = "Search unavailable: ${e.message}") } }
         }
@@ -192,11 +198,14 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun refresh() = action { refreshAll(); mutable.update { if (it.historyAvailable) { it.selectedChat?.id?.let(uncertainChats::remove); it.copy(uncertainSend = false) } else it } }
 
     private suspend fun refreshAll() {
+        mutable.update { it.copy(catalogRevision = it.catalogRevision + 1, catalogError = null) }
+        val revision = mutable.value.catalogRevision
         val host = rpc.get("/v1/host"); mutable.update { it.copy(host = host.text("name", "Your computer")) }
         val inventory = rpc.get("/v1/projects"); cachedInventory = inventory; applyInventory(inventory)
         val active = listPage(false, null); val archived = listPage(true, null)
+        if (mutable.value.catalogRevision != revision) return
         cachedList = JsonArray(active.array("data") + archived.array("data").map { r -> buildJsonObject { (r as? JsonObject)?.forEach { (k, v) -> put(k, v) }; put("cachedArchived", true) } })
-        mutable.update { it.copy(chats = cachedList.map { r -> parseChat(r.jsonObject, r.jsonObject.text("cachedArchived") == "true") }.sortedWith(compareByDescending<Chat> { c -> c.pinned }.thenByDescending { c -> c.updatedAt }),
+        mutable.update { if (it.catalogRevision != revision) it else it.copy(chats = cachedList.map { r -> parseChat(r.jsonObject, r.jsonObject.text("cachedArchived") == "true") }.sortedWith(compareByDescending<Chat> { c -> c.pinned }.thenByDescending { c -> c.updatedAt }),
             activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }) }
         // Enrich the read-only full catalogue with live status from the shared runtime.
         val live = rpc.call("thread/list", buildJsonObject { put("limit", 50); put("sortKey", "updated_at"); put("useStateDbOnly", true)
@@ -219,37 +228,56 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         if (raw.text("epoch") != lastEpoch) return
         mutable.update { reconcilePendingSnapshot(it, raw) }
     }
-    private suspend fun listPage(archived: Boolean, cursor: String?, query: String = mutable.value.searchTerm): JsonObject = rpc.get("/v1/history?archived=$archived" + (cursor?.let { "&cursor=$it" } ?: "") + "&searchTerm=" + java.net.URLEncoder.encode(query, "UTF-8"))
-    fun loadMore(archived: Boolean) = action {
-        val cursor = if (archived) mutable.value.archivedCursor else mutable.value.activeCursor
-        if (cursor != null) {
-            val page = listPage(archived, cursor)
+    private suspend fun listPage(archived: Boolean, cursor: String?, query: String = mutable.value.searchTerm): JsonObject = rpc.get("/v1/history?archived=$archived" + (cursor?.let { "&cursor=${java.net.URLEncoder.encode(it, "UTF-8")}" } ?: "") + "&searchTerm=" + java.net.URLEncoder.encode(query, "UTF-8"))
+    fun loadMore(archived: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        if (!catalogMutex.tryLock()) return@launch
+        val initial = mutable.value
+        val cursor = if (archived) initial.archivedCursor else initial.activeCursor
+        if (cursor == null || initial.connection != "Connected") { catalogMutex.unlock(); return@launch }
+        mutable.update { it.copy(catalogLoading = true, catalogError = null) }
+        try {
+            val page = listPage(archived, cursor, initial.searchTerm)
+            if (mutable.value.catalogRevision != initial.catalogRevision) return@launch
             val raw = page.array("data").map { r -> buildJsonObject { r.jsonObject.forEach { (k, v) -> put(k, v) }; put("cachedArchived", archived) } }
             cachedList = JsonArray((cachedList + raw).distinctBy { it.jsonObject.text("id") })
-            mutable.update { it.copy(chats = (it.chats + raw.map { r -> parseChat(r, archived) }).distinctBy { c -> c.id },
-                activeCursor = if (!archived) page.text("nextCursor").ifEmpty { null } else it.activeCursor,
-                archivedCursor = if (archived) page.text("nextCursor").ifEmpty { null } else it.archivedCursor) }
+            mutable.update { if (it.catalogRevision != initial.catalogRevision) it else it.copy(chats = (it.chats + raw.map { r -> parseChat(r, archived) }).distinctBy { c -> c.id },
+                activeCursor = if (!archived) page.text("nextCursor").takeIf { next -> next.isNotEmpty() && next != cursor } else it.activeCursor,
+                archivedCursor = if (archived) page.text("nextCursor").takeIf { next -> next.isNotEmpty() && next != cursor } else it.archivedCursor) }
             saveCache()
-        }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+            else mutable.update { if (it.catalogRevision != initial.catalogRevision) it else it.copy(catalogError = "Could not load more chats. Tap to retry.") }
+        } finally { mutable.update { it.copy(catalogLoading = false) }; catalogMutex.unlock() }
     }
     fun open(chat: Chat) {
-        mutable.update { it.copy(selectedChat = chat, diff = null, timeline = cachedThreads[chat.id]?.let { r -> parseTimeline(r.jsonObject) } ?: emptyList(), draft = store.draft(chat.id), attachments = store.attachments(chat.id), chatMode = store.chatMode(chat.id), accessMode = store.accessMode(chat.id), selectedModel = "", selectedEffort = "", uncertainSend = chat.id in uncertainChats, historyAvailable = true, activeTurnId = "", snapshotSequence = 0, itemSequences = emptyMap(), threadSequence = 0, olderCursor = null, lastTurnStatus = "", statusSequence = 0, titleSequence = 0) }
+        olderJob?.cancel()
+        synchronized(uploadJobs) { uploadJobs.values.forEach { it.cancel() }; uploadJobs.clear() }
+        val history = cachedThreads[chat.id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
+        val window = historyWindow(history, emptyList())
+        mutable.update { it.copy(selectedChat = chat, historyRevision = it.historyRevision + 1, diff = null, timeline = window, hiddenOlderCount = history.size - window.size, olderLoading = false, olderError = null, draft = store.draft(chat.id), attachments = store.attachments(chat.id), uploading = false, chatMode = store.chatMode(chat.id), accessMode = store.accessMode(chat.id), selectedModel = "", selectedEffort = "", uncertainSend = chat.id in uncertainChats, historyAvailable = true, activeTurnId = "", snapshotSequence = 0, itemSequences = emptyMap(), threadSequence = 0, olderCursor = null, lastTurnStatus = "", statusSequence = 0, titleSequence = 0) }
         if (rpc.status.value == "Connected") action { loadThread(chat.id) }
     }
     private suspend fun loadThread(id: String) {
+        val revision = mutable.value.historyRevision
         val loaded = readThreadHistory(id, rpc::call)
-        val raw = loaded.thread
+        val previous = cachedThreads[id]?.jsonObject
+        val raw = if (loaded.olderCursor != null && previous != null) JsonObject(loaded.thread + ("turns" to
+            JsonArray((previous.array("turns") + loaded.thread.array("turns")).distinctBy { it.jsonObject.text("id") }.map { turn ->
+                loaded.thread.array("turns").find { it.jsonObject.text("id") == turn.jsonObject.text("id") } ?: turn
+            }))) else loaded.thread
         if (loaded.authoritative || !cachedThreads.containsKey(id)) cachedThreads = buildJsonObject {
             cachedThreads.entries.toList().takeLast(7).forEach { (k, v) -> put(k, v) }; put(id, raw)
         }
         val cutoff = loaded.sequence
         mutable.update { current ->
-            if (current.selectedChat?.id != id) current else {
+            if (current.selectedChat?.id != id || current.historyRevision != revision) current else {
                 val newer = current.timeline.filter { (current.itemSequences[it.id] ?: 0) > cutoff }.associateBy { it.id }
-                val history = parseTimeline(raw)
+                val fullHistory = if (loaded.authoritative) parseTimeline(raw) else cachedThreads[id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
+                val history = historyWindow(fullHistory, current.timeline)
                 val merged = if (!loaded.authoritative) current.timeline else history.map { newer[it.id] ?: it } + newer.values.filter { n -> history.none { it.id == n.id } }
                 val summary = parseChat(raw, current.selectedChat.archived)
-                reconcileChatMetadata(current, summary, loaded.metadataSequence).copy(timeline = merged, olderCursor = loaded.olderCursor, historyAvailable = loaded.authoritative,
+                reconcileChatMetadata(current, summary, loaded.metadataSequence).copy(timeline = merged, hiddenOlderCount = fullHistory.size - history.size, olderCursor = loaded.olderCursor, historyAvailable = loaded.authoritative,
                     selectedModel = current.selectedModel.ifEmpty { raw.text("model") }, selectedEffort = current.selectedEffort.ifEmpty { raw.text("reasoningEffort") },
                     lastTurnStatus = if (!loaded.authoritative || current.threadSequence > cutoff) current.lastTurnStatus else (raw.array("turns").lastOrNull() as? JsonObject)?.text("status").orEmpty(),
                     activeTurnId = if (!loaded.authoritative || current.threadSequence > cutoff) current.activeTurnId else raw.array("turns").mapNotNull { it as? JsonObject }.lastOrNull { it.text("status") == "inProgress" }?.text("id").orEmpty(),
@@ -258,11 +286,35 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
         saveCache()
     }
-    fun loadOlder() = action {
-        val current = mutable.value; val id = current.selectedChat?.id ?: return@action; val cursor = current.olderCursor ?: return@action
-        val page = rpc.call("thread/turns/list", buildJsonObject { put("threadId", id); put("cursor", cursor); put("limit", 20); put("itemsView", "full"); put("sortDirection", "desc") })
-        val turns = JsonArray(page.array("data").reversed()); val older = parseTimeline(buildJsonObject { put("turns", turns) })
-        mutable.update { if (it.selectedChat?.id != id) it else it.copy(timeline = (older + it.timeline).distinctBy { item -> item.id }, olderCursor = page.text("nextCursor").ifEmpty { null }) }
+    fun loadOlder() {
+        val initial = mutable.value
+        val id = initial.selectedChat?.id ?: return
+        if (initial.olderLoading || olderJob?.isActive == true || (initial.hiddenOlderCount == 0 && initial.connection != "Connected")) return
+        if (initial.hiddenOlderCount == 0 && initial.olderCursor == null) return
+        mutable.update { it.copy(olderLoading = true, olderError = null) }
+        olderJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (initial.hiddenOlderCount > 0) {
+                    val all = cachedThreads[id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
+                    val older = all.take(initial.hiddenOlderCount).takeLast(60)
+                    mutable.update { if (it.selectedChat?.id != id || it.historyRevision != initial.historyRevision) it else it.copy(
+                        timeline = (older + it.timeline).distinctBy { item -> item.id }, hiddenOlderCount = (initial.hiddenOlderCount - older.size).coerceAtLeast(0)) }
+                } else {
+                    val page = rpc.call("thread/turns/list", buildJsonObject { put("threadId", id); put("cursor", initial.olderCursor!!); put("limit", 20); put("itemsView", "full"); put("sortDirection", "desc") })
+                    val turns = JsonArray(page.array("data").reversed())
+                    val older = parseTimeline(buildJsonObject { put("turns", turns) })
+                    mutable.update { if (it.selectedChat?.id != id || it.historyRevision != initial.historyRevision || it.olderCursor != initial.olderCursor) it else it.copy(
+                        timeline = (older + it.timeline).distinctBy { item -> item.id }, olderCursor = page.text("nextCursor").takeIf { next -> next.isNotEmpty() && next != initial.olderCursor }) }
+                    val cached = cachedThreads[id]?.jsonObject ?: buildJsonObject {}
+                    cachedThreads = JsonObject(cachedThreads + (id to JsonObject(cached + ("turns" to JsonArray((turns + cached.array("turns")).distinctBy { it.jsonObject.text("id") })))))
+                    saveCache()
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                else mutable.update { if (it.selectedChat?.id != id || it.historyRevision != initial.historyRevision) it else it.copy(olderError = "Could not load earlier messages. Tap to retry.") }
+            } finally { mutable.update { if (it.selectedChat?.id != id || it.historyRevision != initial.historyRevision) it else it.copy(olderLoading = false) } }
+        }
     }
     fun newChat(project: Project? = null) {
         if (mutable.value.loading) return
@@ -327,25 +379,31 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun removeAttachment(id: String) {
         if (mutable.value.sending) return
-        mutable.update { it.copy(attachments = it.attachments.filter { a -> a.id != id }) }
-        store.attachments(mutable.value.selectedChat?.id ?: "new", mutable.value.attachments)
+        synchronized(uploadJobs) {
+            uploadJobs.remove(id)?.cancel()
+            mutable.update { it.copy(attachments = it.attachments.filter { a -> a.id != id }, uploading = it.attachments.any { a -> a.id != id && a.uploading }) }
+            store.attachments(mutable.value.selectedChat?.id ?: "new", mutable.value.attachments.filter { !it.uploading })
+        }
     }
     fun attach(uris: List<Uri>) {
         val initial = mutable.value; val chatId = initial.selectedChat?.id ?: return
-        if (initial.uploading || initial.sending || initial.connection != "Connected") return
+        if (initial.sending || initial.connection != "Connected") return
         if (initial.attachments.size + uris.size > 8) { mutable.update { it.copy(notice = "Attach up to 8 files per message") }; return }
-        mutable.update { it.copy(uploading = true, notice = null) }
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val resolver = getApplication<Application>().contentResolver
-                for (uri in uris) {
+        for (uri in uris) {
+            val id = java.util.UUID.randomUUID().toString()
+            val pending = Attachment(id, "Preparing attachment…", 0, "", buildJsonObject {}, uploading = true)
+            mutable.update { it.copy(attachments = it.attachments + pending, uploading = true, notice = null) }
+            val job = viewModelScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+                try {
+                    val resolver = getApplication<Application>().contentResolver
                     var name = "attachment"
                     resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
                         if (cursor.moveToFirst()) name = cursor.getString(0) ?: name
                     }
                     var mime = resolver.getType(uri) ?: "application/octet-stream"
+                    mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(attachments = it.attachments.map { a -> if (a.id == id) a.copy(name = name, mimeType = mime) else a }) }
                     var bytes = resolver.openInputStream(uri)?.use { readAttachmentBytes(it) } ?: error("Cannot read the selected file")
-                    require(bytes.isNotEmpty() && bytes.size <= 20 * 1024 * 1024) { "Select a non-empty file up to 20 MB" }
+                    var previewPath = ""
                     if (mime.startsWith("image/")) {
                         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
@@ -353,19 +411,41 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         val options = BitmapFactory.Options().apply { inSampleSize = 1 }
                         while (maxOf(bounds.outWidth, bounds.outHeight) / options.inSampleSize > 2048) options.inSampleSize *= 2
                         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: error("Cannot decode the selected image")
-                        try { bytes = ByteArrayOutputStream().use { output -> check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)); output.toByteArray() } }
-                        finally { bitmap.recycle() }
+                        try {
+                            bytes = ByteArrayOutputStream().use { output -> check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)); output.toByteArray() }
+                            val scale = minOf(1f, 256f / maxOf(bitmap.width, bitmap.height))
+                            val thumb = bitmap.scale((bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1))
+                            try {
+                                val dir = java.io.File(getApplication<Application>().cacheDir, "attachment-previews").apply { mkdirs() }
+                                val file = java.io.File(dir, "$id.jpg")
+                                file.outputStream().use { check(thumb.compress(Bitmap.CompressFormat.JPEG, 80, it)) }
+                                previewPath = file.absolutePath
+                            } finally { if (thumb !== bitmap) thumb.recycle() }
+                        } finally { bitmap.recycle() }
                         mime = "image/jpeg"; name = name.substringBeforeLast('.', name) + ".jpg"
                     }
-                    val attachment = rpc.upload(name, mime, bytes)
-                    val saved = store.attachments(chatId) + attachment; store.attachments(chatId, saved)
-                    mutable.update { if (it.selectedChat?.id == chatId) it.copy(attachments = saved) else it }
+                    ensureActive()
+                    mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(attachments = it.attachments.map { a -> if (a.id == id) a.copy(name = name, size = bytes.size.toLong(), mimeType = mime, previewPath = previewPath) else a }) }
+                    val attachment = rpc.upload(name, mime, bytes).copy(previewPath = previewPath)
+                    ensureActive()
+                    synchronized(uploadJobs) {
+                        // Cancel/remove wins even if the server accepted the bytes just before cancellation.
+                        if (uploadJobs.containsKey(id)) {
+                            store.attachments(chatId, store.attachments(chatId) + attachment)
+                            mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(attachments = it.attachments.map { a -> if (a.id == id) attachment else a }) }
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                    else mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(notice = e.message ?: "Attachment upload failed") }
+                    mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(attachments = it.attachments.filter { a -> a.id != id }) }
+                } finally {
+                    uploadJobs.remove(id)
+                    mutable.update { it.copy(uploading = it.attachments.any { a -> a.uploading }) }
                 }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
-                else mutable.update { it.copy(notice = e.message ?: "Attachment upload failed") }
-            } finally { mutable.update { it.copy(uploading = false) } }
+            }
+            uploadJobs[id] = job; job.start()
         }
     }
     fun interrupt() = action {

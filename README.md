@@ -6,9 +6,9 @@ A native Android 11+ client for a Codex app-server on your Linux machine. Suppor
 
 The deployed server runs on your own Linux machine under `codex-remote.service`, using `/home/nulltogeek/.codex/config.toml` and the installed Codex 0.159.2 binary. The desktop can be closed. Your machine must stay awake with WireGuard connected.
 
-The APK connects to **https://codex.geeksun.ir** over your private WireGuard network. Existing Nginx on `79.175.177.57` terminates HTTPS/WSS and forwards to `192.168.1.2:8787`. Sign in with username **nulltogeek** and the initial password in the owner-only `~/.local/share/custom-codex/initial-login.json` file; view it locally with `vim`. The app encrypts its session using Android Keystore and does not store the password. No pairing token entry is required. Install the 0.5.0 APK once, or upgrade through Settings → App updates if you already have the updater.
+The APK connects to **https://codex.geeksun.ir** over your private WireGuard network. Existing Nginx on `79.175.177.57` terminates HTTPS/WSS and forwards to `192.168.1.2:8787`. Sign in with username **nulltogeek** and the initial password in the owner-only `~/.local/share/custom-codex/initial-login.json` file; view it locally with `vim`. The app encrypts its session using Android Keystore and does not store the password. No pairing token entry is required. Install the 0.6.0 APK once, or upgrade through Settings → App updates if you already have the updater.
 
-Read [the compact 0.5.0 layout guide](docs/mobile-0.5.0.md), [in-app updates](docs/in-app-updates.md), [the 0.3.0 feature guide](docs/mobile-0.3.0.md), [username/password login](docs/username-password-login.md) and [the deployed WireGuard setup and recovery guide](docs/local-wireguard-deployment.md) first. [Standalone runtime details](docs/standalone-server.md) cover installation on another host. Node.js 22.13+ is required. The historical desktop-sharing launcher still uses the earlier token protocol described in [the desktop runbook](docs/runbook.md).
+Read [the 0.6.0 chat loading guide](docs/mobile-0.6.0.md), [the compact 0.5.0 layout guide](docs/mobile-0.5.0.md), [in-app updates](docs/in-app-updates.md), [the 0.3.0 feature guide](docs/mobile-0.3.0.md), [username/password login](docs/username-password-login.md) and [the deployed WireGuard setup and recovery guide](docs/local-wireguard-deployment.md) first. [Standalone runtime details](docs/standalone-server.md) cover installation on another host. Node.js 22.13+ is required. The historical desktop-sharing launcher still uses the earlier token protocol described in [the desktop runbook](docs/runbook.md).
 
 Standalone and ordinary desktop processes share saved configuration/history, while each owns its running turns and approvals. Use the server's connected clients to control work started on the server.
 
@@ -44,6 +44,7 @@ The build script produces `artifacts/codex-remote-debug.apk`, `artifacts/codex-r
 - [Setup and recovery](docs/runbook.md)
 - [In-app updates and current verification](docs/in-app-updates.md)
 - [Composer/rendering improvements](docs/mobile-0.3.0.md)
+- [Scroll loading, collapsible output and attachment previews](docs/mobile-0.6.0.md)
 - [Compact chat, projects and composer](docs/mobile-0.5.0.md)
 - [Earlier verification results](docs/verification.md)
 

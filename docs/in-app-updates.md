@@ -66,10 +66,18 @@ The newer 0.4.1 debug APK was downloaded and verified against the emulator's ins
 
 The separate model-provider HTTP 401 was subsequently repaired on October 11. Real text replies and a follow-up pass through the deployed endpoint; see [the authentication repair](local-wireguard-deployment.md#provider-authentication-repaired-on-october-11-2026). That service restart requires fresh phone login. It does not require another APK update.
 
-## Current 0.5.0 layout update
+## Historical 0.5.0 layout update
 
 Version 0.5.0/code 6 adds compact chat/project rows and an integrated composer with mode/model/access in one toolbar. Full access descriptions and reasoning effort open in Chat settings. See [the layout guide](mobile-0.5.0.md) for the 36 JVM tests, clean lint, five emulator layout checks, explicit keyboard-visibility check and reviewed captures.
 
 Both APKs passed signature and actual package/version/minimum-SDK checks; their signing identities match 0.4.1. Release is 2,742,222 bytes and debug is 60,486,055 bytes. `node scripts/publish-app-update.mjs docs/release-notes/0.5.0.txt` published both channels without a backend restart. Existing updater users can tap **Check for updates** in Settings to discover this release immediately instead of waiting for the automatic check interval. Previous delivery files remain under `artifacts/v0.4.1/`.
 
 `node scripts/verify-app-update.mjs https://codex.geeksun.ir --local` passed complete authenticated downloads of both 0.5.0 channels, exact sizes/SHA-256, matching local metadata and unauthorized/browser-Origin rejection (`artifacts/v0.5.0-update-proxy.json`). Delivery checksums passed, and the release APK installed over the existing emulator release. Physical-phone update installation remains unverified.
+
+## Current 0.6.0 chat update
+
+Version 0.6.0/code 7 adds scroll-loaded history and chats, collapsible code/tool outputs, image previews with cancel/removal, and one settings panel for mode, model, reasoning and access. See [the feature guide](mobile-0.6.0.md) for legacy-history compatibility, offline cached batches and exact validation. All 39 JVM tests, clean lint, debug/release/instrumentation builds and eight individual UI checks passed. The emulator’s interrupted initial run and successful remaining six-test run are recorded there.
+
+Both APKs preserve the 0.5.0 signing identity. Publication verified actual package/version/minimum-SDK metadata. Release is 2,774,990 bytes and debug is 60,598,851 bytes. Publishing required no backend/Nginx restart. Existing updater users can open **Settings → App updates → Check for updates** to discover 0.6.0; the previous delivery remains in `artifacts/v0.5.0/`.
+
+Complete authenticated HTTPS downloads of both 0.6.0 channels passed size/SHA-256/local-metadata checks, along with unauthorized/browser-Origin rejection (`artifacts/v0.6.0-update-proxy.json`). Delivery checksums passed; Android accepted the release upgrade over the emulator’s existing release package. Physical-phone update installation remains unverified.

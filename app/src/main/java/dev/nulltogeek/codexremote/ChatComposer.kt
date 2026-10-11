@@ -13,6 +13,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -27,10 +29,7 @@ import androidx.compose.ui.unit.dp
             ComposerOptions(state, vm)
             if (state.attachments.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(state.attachments, key = { it.id }) { file ->
-                    InputChip(selected = false, onClick = {},
-                        label = { Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp)) },
-                        leadingIcon = { Icon(if (file.mimeType.startsWith("image/")) Icons.Outlined.Image else Icons.Outlined.InsertDriveFile, null, Modifier.size(16.dp)) },
-                        trailingIcon = { IconButton(onClick = { vm.removeAttachment(file.id) }, enabled = !state.sending, modifier = Modifier.size(24.dp)) { Icon(Icons.Outlined.Close, "Remove ${file.name}", Modifier.size(16.dp)) } })
+                    AttachmentTile(file, !state.sending) { vm.removeAttachment(file.id) }
                 }
             }
             if (state.uploading) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -64,6 +63,27 @@ import androidx.compose.ui.unit.dp
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable private fun AttachmentTile(file: Attachment, removable: Boolean, remove: () -> Unit) {
+    val bitmap by produceState<android.graphics.Bitmap?>(null, file.previewPath) {
+        if (file.previewPath.isNotEmpty()) value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            android.graphics.BitmapFactory.decodeFile(file.previewPath)
+        }
+    }
+    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+        Row(Modifier.width(204.dp).height(64.dp).padding(start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            val preview = bitmap
+            if (preview != null) androidx.compose.foundation.Image(preview.asImageBitmap(), "Preview of ${file.name}", Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+            else Icon(if (file.mimeType.startsWith("image/")) Icons.Outlined.Image else Icons.Outlined.InsertDriveFile, null, Modifier.size(40.dp))
+            Spacer(Modifier.width(6.dp))
+            Column(Modifier.weight(1f)) {
+                Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
+                Text(if (file.uploading) "Uploading…" else "Ready", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = remove, enabled = removable) { Icon(Icons.Outlined.Close, if (file.uploading) "Cancel upload ${file.name}" else "Remove ${file.name}", Modifier.size(18.dp)) }
         }
     }
 }

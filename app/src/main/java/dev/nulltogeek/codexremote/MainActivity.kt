@@ -27,6 +27,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
@@ -167,7 +168,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 screen.startsWith("chat:") && state.selectedChat != null -> key(state.selectedChat.id) { Conversation(state, vm) { approval = it } }
                 screen == "projects" -> ProjectScreen(state, vm)
                 screen == "settings" -> SettingsScreen(state, vm)
-                else -> ChatsScreen(state, vm) { approval = it }
+                else -> ChatsScreen(state, vm, approval = { approval = it })
             } }
         }
     }
@@ -199,7 +200,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
 }
 
-@Composable private fun ChatsScreen(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit) {
+@Composable internal fun ChatsScreen(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit, loadMore: (Boolean) -> Unit = { vm.loadMore(it) }) {
     val query = state.searchTerm; var tab by rememberSaveable { mutableIntStateOf(0) }
     val project = state.projects.find { it.id == state.projectFilter }
     val list = remember(state.chats, query, tab, state.projectFilter, state.assignments, state.projects) {
@@ -210,7 +211,14 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             category && projectMatch && (chat.title.contains(query, true) || chat.preview.contains(query, true))
         }
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    val listState = rememberLazyListState()
+    val cursor = if (tab == 1) state.archivedCursor else state.activeCursor
+    LaunchedEffect(cursor, tab, query, state.projectFilter, state.catalogError, state.connection, state.catalogLoading) {
+        if (cursor != null && state.catalogError == null && !state.catalogLoading && state.connection == "Connected")
+            snapshotFlow { listState.layoutInfo.totalItemsCount > 0 && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= listState.layoutInfo.totalItemsCount - 4 }
+                .collect { nearEnd -> if (nearEnd) loadMore(tab == 1) }
+    }
+    LazyColumn(Modifier.fillMaxSize().testTag("catalog-list"), state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -239,9 +247,10 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             val p = state.projects.find { it.id == (state.assignments[chat.id] ?: chat.projectId) } ?: state.projects.find { chat.cwd in it.roots }
             ChatRow(chat, p?.name ?: "No project", onClick = { vm.open(chat) })
         }
-        if ((tab == 1 && state.archivedCursor != null) || (tab != 1 && state.activeCursor != null)) item {
-            OutlinedButton(onClick = { vm.loadMore(tab == 1) }, Modifier.fillMaxWidth(), enabled = !state.loading && state.connection == "Connected") { Text("Load more chats") }
+        if (cursor != null) item(key = "catalog-footer") {
+            PageLoader(state.catalogLoading, state.catalogError, "More chats load as you scroll", state.connection == "Connected") { loadMore(tab == 1) }
         }
+
     }
 }
 
@@ -324,12 +333,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 }
 
 @Composable private fun Conversation(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit) {
-    val listState = rememberLazyListState()
-    var followTail by remember { mutableStateOf(true) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) vm.attach(uris) }
-    LaunchedEffect(listState) { snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }.collect { (scrolling, canScroll) -> if (scrolling) followTail = !canScroll } }
-    val last = state.timeline.lastOrNull()
-    LaunchedEffect(last?.id, last?.text?.length) { if (followTail && state.timeline.isNotEmpty()) listState.scrollToItem(state.timeline.lastIndex + if (state.olderCursor != null) 1 else 0) }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             val active = state.selectedChat?.status == "active"
@@ -344,35 +348,76 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             }, style = MaterialTheme.typography.labelSmall)
             Spacer(Modifier.weight(1f)); if (active) TextButton(onClick = { vm.interrupt() }, enabled = state.connection == "Connected") { Icon(Icons.Outlined.Stop, null, Modifier.size(16.dp)); Text("Stop") }
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (state.olderCursor != null) item { TextButton(onClick = { vm.loadOlder() }, enabled = !state.loading && state.connection == "Connected", modifier = Modifier.fillMaxWidth()) { Text("Load earlier messages") } }
-            if (state.timeline.isEmpty() && !state.historyAvailable && state.selectedChat?.preview?.isNotBlank() == true) item { EmptyState("Earlier messages unavailable", "New messages will appear here. You can continue this conversation.") }
-            else if (state.timeline.isEmpty()) item { EmptyState(if (state.chatMode == "chat") "A new conversation" else "Ready to build", if (state.chatMode == "chat") "Ask a question, share an image, or discuss an idea." else "Describe the work, attach a file, and choose how Codex can access your computer.") }
-            items(state.timeline, key = { it.id }, contentType = { it.type }) { item -> MessageItem(item, vm::showDiff) }
-            items(state.pending.filter { it.params.text("threadId") == state.selectedChat?.id }, key = { it.id }) { request ->
-                Button(onClick = { approval(request) }, Modifier.fillMaxWidth()) { Text(if (request.method.contains("Approval")) "Review requested action" else "Answer Codex") }
-            }
-        }
+        ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval)
         ChatComposer(state, vm, onPick = { picker.launch(it) })
     }
 }
 
+@Composable internal fun ChatTimeline(state: ScreenState, modifier: Modifier = Modifier, loadOlder: () -> Unit, showDiff: (Change) -> Unit, approval: (PendingInput) -> Unit) {
+    val listState = remember(state.selectedChat?.id) { LazyListState() }
+    var followTail by remember(state.selectedChat?.id) { mutableStateOf(true) }
+    val hasOlder = state.olderCursor != null || state.hiddenOlderCount > 0
+    LaunchedEffect(listState) { snapshotFlow { listState.canScrollBackward }.collect { canScroll -> followTail = !canScroll } }
+    val last = state.timeline.lastOrNull()
+    LaunchedEffect(last?.id, last?.text?.length) { if (followTail && state.timeline.isNotEmpty()) listState.scrollToItem(0) }
+    LaunchedEffect(listState, state.olderCursor, state.hiddenOlderCount, state.olderError, state.olderLoading, state.connection) {
+        if (hasOlder && state.olderError == null && !state.olderLoading && (state.hiddenOlderCount > 0 || state.connection == "Connected"))
+            snapshotFlow { listState.layoutInfo.totalItemsCount > 0 && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= listState.layoutInfo.totalItemsCount - 3 }
+                .collect { nearStart -> if (nearStart) loadOlder() }
+    }
+    LazyColumn(modifier.fillMaxWidth().testTag("history-list"), state = listState, reverseLayout = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        items(state.pending.filter { it.params.text("threadId") == state.selectedChat?.id }, key = { "pending-${it.id}" }) { request ->
+            Button(onClick = { approval(request) }, Modifier.fillMaxWidth()) { Text(if (request.method.contains("Approval")) "Review requested action" else "Answer Codex") }
+        }
+        items(state.timeline.asReversed(), key = { it.id }, contentType = { it.type }) { item -> MessageItem(item, showDiff) }
+        if (state.timeline.isEmpty() && !state.historyAvailable && state.selectedChat?.preview?.isNotBlank() == true) item { EmptyState("Earlier messages unavailable", "New messages will appear here. You can continue this conversation.") }
+        else if (state.timeline.isEmpty()) item { EmptyState(if (state.chatMode == "chat") "A new conversation" else "Ready to build", if (state.chatMode == "chat") "Ask a question, share an image, or discuss an idea." else "Describe the work, attach a file, and choose how Codex can access your computer.") }
+        if (hasOlder) item(key = "history-footer") {
+            PageLoader(state.olderLoading, state.olderError, "Earlier messages load as you scroll", state.hiddenOlderCount > 0 || state.connection == "Connected") { loadOlder() }
+        }
+
+    }
+}
+
+@Composable private fun PageLoader(loading: Boolean, error: String?, label: String, enabled: Boolean, retry: () -> Unit) {
+    if (error != null) TextButton(onClick = retry, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text(error) }
+    else Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        if (loading) { CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)) }
+        Text(if (loading) "Loading…" else label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
 @Composable private fun MessageItem(item: TimelineItem, showDiff: (Change) -> Unit) {
-    var visibleLimit by remember(item.id) { mutableIntStateOf(6000) }
+    var visibleLimit by rememberSaveable(item.id) { mutableIntStateOf(6000) }
+    var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
     val user = item.type == "userMessage"; val tool = item.type !in listOf("userMessage", "agentMessage")
-    val visible = item.text.take(visibleLimit)
+    val label = if (user) "YOU" else if (!tool) "CODEX" else when (item.type) { "commandExecution" -> "TERMINAL"; "fileChange" -> "CHANGES"; "reasoning" -> "WORKING"; else -> item.type.uppercase() }
     Surface(color = if (user) MaterialTheme.colorScheme.surfaceVariant else if (tool) MaterialTheme.colorScheme.surface else Color.Transparent, shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.fillMaxWidth().padding(if (tool || user) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(if (user) "YOU" else if (!tool) "CODEX" else when (item.type) { "commandExecution" -> "TERMINAL"; "fileChange" -> "CHANGES"; "reasoning" -> "WORKING"; else -> item.type.uppercase() }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-            if (item.detail.isNotBlank()) SelectionContainer { Text(item.detail, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
-            if (visible.isNotBlank()) {
-                if (!tool && !user) MarkdownView(visible)
-                else if (item.type == "commandExecution") CodeBlock(visible, "terminal")
-                else SelectionContainer { Text(visible, style = if (tool) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, fontFamily = if (tool) FontFamily.Monospace else FontFamily.Default) }
+            if (tool) Surface(onClick = { expanded = !expanded }, color = Color.Transparent) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Text(item.detail.ifBlank { item.text }.lineSequence().firstOrNull().orEmpty().take(160), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                        if (item.status.isNotEmpty()) Text(item.status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (expanded) "Collapse $label" else "Expand $label")
+                }
+            } else Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+            if (!tool || expanded) {
+                Column(if (tool) Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()) else Modifier,
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (item.detail.isNotBlank()) SelectionContainer { Text(item.detail, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
+                val visible = item.text.take(visibleLimit)
+                if (visible.isNotBlank()) {
+                    if (!tool && !user) MarkdownView(visible)
+                    else if (item.type == "commandExecution") CodeBlock(item.text, "terminal", collapsible = false)
+                    else SelectionContainer { Text(visible, style = if (tool) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, fontFamily = if (tool) FontFamily.Monospace else FontFamily.Default) }
+                }
+                if (item.text.length > visibleLimit && item.type != "commandExecution") TextButton(onClick = { visibleLimit += 6000 }) { Text("Show more output") }
+                item.changes.forEach { change -> OutlinedButton(onClick = { showDiff(change) }, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Difference, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(change.path, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
             }
-            if (item.text.length > visibleLimit) TextButton(onClick = { visibleLimit += 6000 }) { Text("Show more output") }
-            item.changes.forEach { change -> OutlinedButton(onClick = { showDiff(change) }, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Difference, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(change.path, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
-            if (item.status.isNotEmpty()) Text(item.status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

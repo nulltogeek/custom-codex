@@ -1,0 +1,5 @@
+Older messages load as you scroll up; more chats load near the bottom of the chats list.
+Code blocks, commands, reasoning and tool outputs now expand/collapse.
+Image attachments show local previews with X to cancel uploads or remove files before sending.
+Codex/Conversation, model, reasoning and access are together in one Chat settings panel.
+Pagination keeps your reading position, deduplicates entries and offers retry after errors.

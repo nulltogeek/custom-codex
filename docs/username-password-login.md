@@ -1,10 +1,10 @@
 # Username and password login
 
-The deployed standalone backend and Android APK 0.5.0 use username/password login at **https://codex.geeksun.ir**. The phone still needs WireGuard and VPN DNS. No pairing token needs to be entered.
+The deployed standalone backend and Android APK 0.6.0 use username/password login at **https://codex.geeksun.ir**. The phone still needs WireGuard and VPN DNS. No pairing token needs to be entered.
 
 ## Sign in
 
-1. Install the new `artifacts/codex-remote-release.apk`, or use **Settings → App updates** if you already have the updater. It upgrades the existing personal release package (version code 6) with the same signing identity. Previous APKs are preserved under `artifacts/v0.1.0/`, `artifacts/v0.2.0/`, `artifacts/v0.3.0/`, `artifacts/v0.4.0/` and `artifacts/v0.4.1/`. See [in-app updates](in-app-updates.md) for current checks and [the compact layout](mobile-0.5.0.md) for its features.
+1. Install the new `artifacts/codex-remote-release.apk`, or use **Settings → App updates** if you already have the updater. It upgrades the existing personal release package (version code 7) with the same signing identity. Previous APKs are preserved under `artifacts/v0.1.0/`, `artifacts/v0.2.0/`, `artifacts/v0.3.0/`, `artifacts/v0.4.0/` `artifacts/v0.4.1/` and `artifacts/v0.5.0/`. See [in-app updates](in-app-updates.md) for current checks and [chat loading and composer changes](mobile-0.6.0.md) for its features.
 2. View the initial login privately on this Linux machine:
 
    ```bash

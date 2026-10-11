@@ -70,7 +70,11 @@ class RemoteUiTest {
             timeline = listOf(TimelineItem("user", "userMessage", "Build an Android client"), TimelineItem("agent", "agentMessage", "The native interface is ready."),
                 TimelineItem("terminal", "commandExecution", "All checks passed\n".repeat(1000), "./gradlew test", "completed"))))
         render(state); screenshot("dark-conversation")
+        compose.onAllNodesWithText("Show more output").assertCountEquals(0)
+        compose.onNodeWithContentDescription("Expand TERMINAL").performClick()
         compose.onAllNodesWithText("Show more output").assertCountEquals(1)
+        compose.onNodeWithContentDescription("Collapse TERMINAL").performClick()
+        compose.onAllNodesWithText("Show more output").assertCountEquals(0)
         compose.runOnIdle { state.value = state.value.copy(diff = Change("app/MainActivity.kt", (1..1200).joinToString("\n") { "+line $it" })) }
         compose.onNodeWithText("app/MainActivity.kt").assertIsDisplayed()
         screenshot("dark-diff")
@@ -83,8 +87,13 @@ class RemoteUiTest {
         render(state)
         compose.onNodeWithText("Copy code").assertIsDisplayed()
         compose.onNodeWithText("python").assertIsDisplayed()
-        compose.onNodeWithText("Codex").performClick()
-        compose.onNodeWithText("Questions and discussion").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Expand code").performClick()
+        compose.onNodeWithText("print('hello')").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Collapse code").performClick()
+        compose.onNodeWithText("print('hello')").assertDoesNotExist()
+        compose.onNodeWithTag("chat-settings").performClick()
+        compose.onNodeWithText("Mode").assertIsDisplayed()
+        compose.onNodeWithText("Conversation").assertIsDisplayed()
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
         compose.onNodeWithContentDescription("Attach file or image").performClick()
         compose.onNodeWithText("Photo or image").assertIsDisplayed()
@@ -115,10 +124,12 @@ class RemoteUiTest {
         val height = compose.onNodeWithTag("chat-composer").fetchSemanticsNode().boundsInRoot.height / density
         assertTrue("Empty composer occupies $height dp", height <= 128f)
         compose.onNodeWithText("Codex").assertIsDisplayed()
+        compose.onNodeWithTag("chat-settings").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Mode").assertIsDisplayed()
+        compose.onNodeWithText("Conversation").assertIsDisplayed()
         compose.onNodeWithContentDescription("Model: gpt-6.1-sol").assertIsDisplayed().performClick()
         compose.onNodeWithText("Host default").assertIsDisplayed()
         InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-        compose.onNodeWithTag("chat-settings").assertIsDisplayed().performClick()
         compose.onNodeWithText("Ask for approvals").assertIsDisplayed()
         compose.onNodeWithText("Full access").assertIsDisplayed()
         compose.onNodeWithText("Reasoning effort").performScrollTo().assertIsDisplayed()
@@ -160,6 +171,66 @@ class RemoteUiTest {
         compose.onNodeWithTag("chat-settings").assertIsDisplayed().performClick()
         compose.onNodeWithText("Reasoning effort").performScrollTo().assertIsDisplayed()
     }
+    @Test fun imagePreviewsAndUploadCancelAreVisibleInComposer() {
+        val dir = compose.activity.cacheDir
+        val image = File(dir, "preview-fixture.jpg")
+        val bitmap = Bitmap.createBitmap(40, 40, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.MAGENTA) }
+        image.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 80, it) }; bitmap.recycle()
+        val state = mutableStateOf(sample().copy(selectedChat = Chat("preview", "Image draft", "", "/workspace", "idle"), uploading = true,
+            attachments = listOf(Attachment("a", "photo.jpg", 100, "image/jpeg", buildJsonObject {}, image.absolutePath, uploading = true),
+                Attachment("b", "notes.txt", 100, "text/plain", buildJsonObject {}))))
+        render(state, narrow = true)
+        compose.waitUntil(10000) { compose.onAllNodesWithContentDescription("Preview of photo.jpg").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Preview of photo.jpg").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Cancel upload photo.jpg").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithContentDescription("Send").assertIsNotEnabled()
+        screenshot("attachment-preview-upload")
+        compose.runOnIdle { state.value = state.value.copy(uploading = false, attachments = state.value.attachments.map { it.copy(uploading = false) }) }
+        compose.onNodeWithContentDescription("Remove photo.jpg").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithContentDescription("Send").assertIsEnabled()
+    }
+
+    @Test fun olderHistoryLoadsOnScrollAndPrependingKeepsTheVisibleMessage() {
+        val state = mutableStateOf(sample().copy(selectedChat = Chat("scroll", "Scroll history", "", "", "idle"), hiddenOlderCount = 60,
+            timeline = (61..100).map { TimelineItem("m$it", "agentMessage", "Message $it") }))
+        var calls = 0
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { ChatTimeline(state.value, Modifier.fillMaxHeight(), loadOlder = { calls++; state.value = state.value.copy(olderLoading = true) }, showDiff = {}, approval = {}) }
+        } }
+        compose.onNodeWithText("Message 100").assertIsDisplayed()
+        assertEquals(0, calls)
+        compose.onNodeWithTag("history-list").performScrollToIndex(38)
+        compose.waitUntil(10000) { calls == 1 }
+        compose.onNodeWithText("Message 62").assertIsDisplayed()
+        val before = compose.onNodeWithText("Message 62").fetchSemanticsNode().boundsInRoot.top
+        compose.runOnIdle { state.value = state.value.copy(timeline = (1..60).map { TimelineItem("m$it", "agentMessage", "Message $it") } + state.value.timeline, olderLoading = false, hiddenOlderCount = 0) }
+        compose.onNodeWithText("Message 62").assertIsDisplayed()
+        assertEquals(before, compose.onNodeWithText("Message 62").fetchSemanticsNode().boundsInRoot.top, 2f)
+        assertEquals(1, calls)
+        // Streaming must not jump to the end while reading older history.
+        compose.runOnIdle { state.value = state.value.copy(timeline = state.value.timeline.dropLast(1) + state.value.timeline.last().copy(text = "Message 100 streaming")) }
+        compose.onNodeWithText("Message 62").assertIsDisplayed()
+        screenshot("history-scroll-anchor")
+    }
+
+    @Test fun cataloguePrefetchesAtTheEndAndErrorsWaitForRetry() {
+        val state = mutableStateOf(sample().copy(activeCursor = "page2"))
+        var calls = 0
+        val vm = RemoteViewModel(compose.activity.application)
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { ChatsScreen(state.value, vm, approval = {}, loadMore = {
+                calls++; state.value = state.value.copy(catalogError = "Could not load more chats. Tap to retry.")
+            }) }
+        } }
+        assertEquals(0, calls)
+        compose.onNodeWithTag("catalog-list").performScrollToIndex(101)
+        compose.waitUntil(10000) { calls == 1 }
+        compose.onNodeWithText("Could not load more chats. Tap to retry.").performScrollTo().assertIsDisplayed()
+        compose.waitForIdle(); assertEquals(1, calls)
+        compose.onNodeWithText("Could not load more chats. Tap to retry.").performClick()
+        assertEquals(2, calls)
+    }
+
     @Test fun nativeAppUpdateDownloadsAndVerifiesInstalledSigningIdentity() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val loginFile = File(context.filesDir, "integration-login.json")

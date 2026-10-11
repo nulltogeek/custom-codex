@@ -35,3 +35,11 @@ private fun unsupportedHistory(e: RpcException): Boolean = e.code == -32601 || l
 
 fun uncertainDelivery(mutationAttempted: Boolean, acknowledged: Boolean, error: Exception): Boolean =
     mutationAttempted && !acknowledged && error !is RpcException && error !is SessionExpiredException
+
+/** Keep already-visible history when refreshing; render only the latest batch on first open. */
+fun historyWindow(history: List<TimelineItem>, visible: List<TimelineItem>, batch: Int = 60): List<TimelineItem> {
+    val anchor = visible.firstOrNull()?.id
+    val index = if (anchor == null) -1 else history.indexOfFirst { it.id == anchor }
+    val start = minOf((history.size - batch).coerceAtLeast(0), if (index < 0) history.size else index)
+    return history.drop(start)
+}

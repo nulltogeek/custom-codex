@@ -21,36 +21,27 @@ private val AccessDetails = mapOf("host" to "Keep this chat’s host policy", "a
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun ComposerOptions(state: ScreenState, vm: RemoteViewModel) {
-    var modeMenu by remember { mutableStateOf(false) }
     var settings by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     val enabled = state.selectedChat?.status != "active" && !state.sending
     val accessLabel = if (state.chatMode == "chat") "Read only" else AccessLabels[state.accessMode] ?: "Host policy"
-    Row(Modifier.fillMaxWidth().testTag("composer-options"), verticalAlignment = Alignment.CenterVertically) {
-        Box {
-            TextButton(onClick = { modeMenu = true }, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp), contentPadding = PaddingValues(horizontal = 6.dp)) {
-                Icon(if (state.chatMode == "chat") Icons.Outlined.ChatBubbleOutline else Icons.Outlined.Code, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp)); Text(if (state.chatMode == "chat") "Chat" else "Codex", style = MaterialTheme.typography.labelMedium, maxLines = 1)
-                Icon(Icons.Outlined.ExpandMore, null, Modifier.size(14.dp))
-            }
-            DropdownMenu(modeMenu, { modeMenu = false }) {
-                DropdownMenuItem(text = { Column { Text("Codex"); Text("Work on files and projects", style = MaterialTheme.typography.bodySmall) } }, onClick = { vm.chatMode("codex"); modeMenu = false })
-                DropdownMenuItem(text = { Column { Text("Conversation"); Text("Questions and discussion", style = MaterialTheme.typography.bodySmall) } }, onClick = { vm.chatMode("chat"); modeMenu = false })
-            }
-        }
-        ModelMenu(state, vm, Modifier.weight(1f))
-        TextButton(onClick = { focus.clearFocus(); settings = true }, modifier = Modifier.heightIn(min = 48.dp).testTag("chat-settings").semantics {
-            contentDescription = "Chat settings, access: $accessLabel, reasoning: ${state.selectedEffort.ifEmpty { "model default" }}"
-        }, contentPadding = PaddingValues(horizontal = 6.dp)) {
-            Icon(Icons.Outlined.Tune, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp))
-            Text(if (state.accessMode == "ask" && state.chatMode != "chat") "Ask" else accessLabel,
-                style = MaterialTheme.typography.labelMedium, maxLines = 1,
-                color = if (state.accessMode == "full" && state.chatMode != "chat") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
-        }
+    TextButton(onClick = { focus.clearFocus(); settings = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("chat-settings").semantics {
+        contentDescription = "Chat settings, mode: ${state.chatMode}, model: ${state.selectedModel.ifEmpty { "host default" }}, access: $accessLabel, reasoning: ${state.selectedEffort.ifEmpty { "model default" }}"
+    }, contentPadding = PaddingValues(horizontal = 6.dp)) {
+        Icon(Icons.Outlined.Tune, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
+        Text(if (state.chatMode == "chat") "Conversation" else "Codex", style = MaterialTheme.typography.labelMedium)
+        Text(" · " + (state.models.find { it.id == state.selectedModel }?.name ?: "Host default"), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
+        Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp))
     }
     if (settings) ModalBottomSheet(onDismissRequest = { settings = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Chat settings", style = MaterialTheme.typography.titleLarge)
+            Text("Mode", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = state.chatMode == "codex", onClick = { vm.chatMode("codex") }, enabled = enabled, label = { Text("Codex") })
+                FilterChip(selected = state.chatMode == "chat", onClick = { vm.chatMode("chat") }, enabled = enabled, label = { Text("Conversation") })
+            }
+            Text(if (state.chatMode == "chat") "Questions and discussion" else "Work on files and projects", style = MaterialTheme.typography.bodySmall)
             Text("Model", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             ModelMenu(state, vm, Modifier.fillMaxWidth())
             HorizontalDivider()

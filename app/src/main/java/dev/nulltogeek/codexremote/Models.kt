@@ -28,14 +28,15 @@ data class TimelineItem(val id: String, val type: String, val text: String, val 
 data class Change(val path: String, val diff: String)
 data class PendingInput(val id: String, val method: String, val params: JsonObject)
 data class ModelChoice(val id: String, val name: String, val efforts: List<String>, val defaultEffort: String)
-data class Attachment(val id: String, val name: String, val size: Long, val mimeType: String, val input: JsonObject)
-fun parseAttachment(raw: JsonObject) = Attachment(raw.text("id"), raw.text("name"), raw["size"]?.jsonPrimitive?.longOrNull ?: 0, raw.text("mimeType"), raw.obj("input"))
-fun Attachment.toJson() = buildJsonObject { put("id", id); put("name", name); put("size", size); put("mimeType", mimeType); put("input", input) }
+data class Attachment(val id: String, val name: String, val size: Long, val mimeType: String, val input: JsonObject, val previewPath: String = "", val uploading: Boolean = false)
+fun parseAttachment(raw: JsonObject) = Attachment(raw.text("id"), raw.text("name"), raw["size"]?.jsonPrimitive?.longOrNull ?: 0, raw.text("mimeType"), raw.obj("input"), raw.text("previewPath"))
+fun Attachment.toJson() = buildJsonObject { put("id", id); put("name", name); put("size", size); put("mimeType", mimeType); put("input", input); put("previewPath", previewPath) }
 data class ScreenState(
     val endpoint: String = "", val username: String = "", val signedIn: Boolean = false, val connection: String = "Offline",
     val host: String = "Your computer", val projects: List<Project> = emptyList(),
     val assignments: Map<String, String> = emptyMap(), val chats: List<Chat> = emptyList(),
     val activeCursor: String? = null, val archivedCursor: String? = null,
+    val catalogLoading: Boolean = false, val catalogError: String? = null, val catalogRevision: Long = 0,
     val selectedChat: Chat? = null, val timeline: List<TimelineItem> = emptyList(),
     val pending: List<PendingInput> = emptyList(), val models: List<ModelChoice> = emptyList(),
     val selectedModel: String = "", val selectedEffort: String = "", val draft: String = "",
@@ -44,6 +45,7 @@ data class ScreenState(
     val projectFilter: String? = null, val uncertainSend: Boolean = false,
     val snapshotSequence: Long = 0, val itemSequences: Map<String, Long> = emptyMap(), val threadSequence: Long = 0,
     val searchTerm: String = "", val olderCursor: String? = null,
+    val historyRevision: Long = 0, val hiddenOlderCount: Int = 0, val olderLoading: Boolean = false, val olderError: String? = null,
     val lastTurnStatus: String = "",
     val statusSequence: Long = 0, val titleSequence: Long = 0, val pendingSequence: Long = 0,
     val attachments: List<Attachment> = emptyList(), val uploading: Boolean = false,

@@ -60,4 +60,24 @@ class ThreadHistoryTest {
         assertTrue(uncertainDelivery(true, false, IOException("Connection lost")))
         assertFalse(uncertainDelivery(true, true, IOException("History refresh disconnected")))
     }
+    @Test fun largeLegacyHistoryStartsWithLatestBatchAndKeepsExpandedHistoryOnRefresh() {
+        val all = (1..200).map { TimelineItem("m$it", "agentMessage", "Message $it") }
+        val initial = historyWindow(all, emptyList())
+        assertEquals(60, initial.size); assertEquals("m141", initial.first().id)
+        val expanded = all.take(140).takeLast(60) + initial
+        assertEquals(120, expanded.size); assertEquals("m81", expanded.first().id)
+        val refreshed = historyWindow(all + TimelineItem("m201", "agentMessage", "Live reply"), expanded)
+        assertEquals("m81", refreshed.first().id); assertEquals("m201", refreshed.last().id)
+        assertEquals(refreshed.size, refreshed.map { it.id }.distinct().size)
+        assertEquals(all, historyWindow(all, all))
+    }
+
+    @Test fun attachmentPreviewRoundTripsWithoutBreakingOlderDrafts() {
+        val old = raw("""{"id":"f","name":"old.txt","size":1,"mimeType":"text/plain","input":{"type":"text","text":"attached"}}""")
+        assertEquals("", parseAttachment(old).previewPath)
+        val image = parseAttachment(old).copy(previewPath = "/private/cache/thumb.jpg")
+        assertEquals(image, parseAttachment(image.toJson()))
+        assertFalse(parseAttachment(image.toJson()).uploading)
+    }
+
 }
