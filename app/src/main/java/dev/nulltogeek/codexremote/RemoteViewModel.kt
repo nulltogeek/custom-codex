@@ -45,6 +45,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             applyInventory(cachedInventory)
             loadFavorites()
             if (mutable.value.signedIn) loadQueue()
+            if (foreground) withContext(Dispatchers.Main) { syncTaskNotifications() }
             connectIfForeground()
         }
         viewModelScope.launch {
@@ -76,6 +77,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun onForeground() {
         foreground = true
+        syncTaskNotifications()
         connectIfForeground()
     }
     private fun connectIfForeground() = viewModelScope.launch(Dispatchers.Main.immediate) {
@@ -115,11 +117,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             passwordChangeAvailable = host.obj("capabilities")["passwordChange"]?.jsonPrimitive?.booleanOrNull == true, notice = null) }
         loadFavorites()
         loadQueue()
+        syncTaskNotifications()
         connectIfForeground()
     }
     private fun clearSession(notice: String? = null) {
         updateJob?.cancel(); olderJob?.cancel()
         synchronized(uploadJobs) { uploadJobs.values.forEach { it.cancel() }; uploadJobs.clear() }
+        TaskNotificationService.stop(getApplication())
         messageQueue.detach(); rpc.close(); store.signOut()
         mutable.update { ScreenState(endpoint = store.endpoint, username = store.username, theme = it.theme, accent = it.accent, motion = it.motion, notice = notice) }
     }
@@ -129,6 +133,34 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         try { rpc.configure(store.endpoint, store.session()); rpc.logout() }
         catch (e: Exception) { if (e is CancellationException) throw e; notice = "Signed out on this phone. Server session could not be revoked while offline." }
         finally { clearSession(notice) }
+    }
+    fun notificationMessage(message: String) { mutable.update { it.copy(notificationMessage = message) } }
+    fun taskNotifications(enabled: Boolean) {
+        store.taskNotifications(enabled)
+        if (!enabled) TaskNotificationService.stop(getApplication())
+        syncTaskNotifications()
+    }
+    private fun syncTaskNotifications() {
+        val app = getApplication<Application>()
+        val allowed = TaskNotificationService.canNotify(app)
+        val enabled = store.taskNotifications
+        val started = if (enabled && allowed && foreground && mutable.value.signedIn) TaskNotificationService.start(app) else false
+        if (!allowed) TaskNotificationService.stop(app)
+        mutable.update { it.copy(taskNotifications = enabled && allowed, notificationMessage = when {
+            enabled && !allowed -> "Allow completed-task notifications in Android Settings."
+            enabled && foreground && it.signedIn && !started -> "Monitoring could not start. Reopen the app to retry."
+            else -> ""
+        }) }
+    }
+    fun openNotificationChat(id: String, endpoint: String, username: String) {
+        val current = mutable.value
+        if (!notificationAccountMatches(current, endpoint, username) || id.isBlank()) return
+        action {
+            val raw = rpc.call("thread/read", buildJsonObject { put("threadId", id); put("includeTurns", false) }).obj("thread")
+            if (!notificationAccountMatches(mutable.value, endpoint, username)) return@action
+            val chat = mutable.value.chats.find { it.id == id } ?: parseChat(raw, raw["archived"]?.jsonPrimitive?.booleanOrNull == true)
+            page(if (chat.archived) "archived" else "chats"); open(chat)
+        }
     }
     fun theme(value: String) { store.theme(value); mutable.update { it.copy(theme = value) } }
     fun accent(value: String) { store.accent(value); mutable.update { it.copy(accent = value) } }

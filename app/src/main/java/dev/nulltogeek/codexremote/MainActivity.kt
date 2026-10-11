@@ -1,6 +1,13 @@
 package dev.nulltogeek.codexremote
 
 import android.os.Bundle
+import android.content.Intent
+import android.os.Build
+import android.Manifest
+import android.content.pm.PackageManager
+import android.provider.Settings
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.LocalContext
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
@@ -55,11 +62,22 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    private var notificationIntent by mutableStateOf<Intent?>(null)
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); notificationIntent = intent }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); enableEdgeToEdge()
+        notificationIntent = intent
         setContent {
             val vm: RemoteViewModel = viewModel()
             val state by vm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(notificationIntent, state.signedIn, state.connection) {
+                val tap = notificationIntent
+                if (state.signedIn && state.connection == "Connected" && tap != null) {
+                    notificationIntent = null
+                    vm.openNotificationChat(tap.getStringExtra(TaskNotificationService.CHAT_ID).orEmpty(),
+                        tap.getStringExtra(TaskNotificationService.HOST).orEmpty(), tap.getStringExtra(TaskNotificationService.USER).orEmpty())
+                }
+            }
             val lifecycle = LocalLifecycleOwner.current.lifecycle
             DisposableEffect(lifecycle) {
                 val observer = LifecycleEventObserver { _, event ->
@@ -522,6 +540,11 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 @Composable private fun SettingsScreen(state: ScreenState, vm: RemoteViewModel) {
     var signOut by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
+        vm.taskNotifications(allowed)
+        if (!allowed) vm.notificationMessage("Notifications were not allowed. You can enable them in Android Settings.")
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("APPEARANCE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -529,6 +552,18 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         Text("ACCENT STYLE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("exchange", "ocean", "mint", "rose", "violet").forEach { accent -> FilterChip(selected = state.accent == accent, onClick = { vm.accent(accent) }, label = { Text(accent.replaceFirstChar { it.uppercase() }) }) } }
         Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Animations"); Text("Smooth screen and color transitions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; Switch(checked = state.motion, onCheckedChange = vm::motion) }
+        HorizontalDivider()
+        TaskNotificationSettings(state.taskNotifications, state.notificationMessage, change = { enabled ->
+            when {
+                !enabled -> vm.taskNotifications(false)
+                Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED -> permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                TaskNotificationService.canNotify(context) -> vm.taskNotifications(true)
+                else -> {
+                    vm.taskNotifications(true)
+                    context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+                }
+            }
+        }, openSettings = { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)) })
         HorizontalDivider()
         AppUpdateSection(state, vm)
         HorizontalDivider()

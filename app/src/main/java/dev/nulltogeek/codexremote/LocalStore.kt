@@ -18,6 +18,7 @@ class LocalStore(private val context: Context) {
     val username get() = prefs.getString("username", "nulltogeek").orEmpty()
     val theme get() = prefs.getString("theme", "system").orEmpty()
     val accent get() = prefs.getString("accent", "exchange").orEmpty()
+    val taskNotifications get() = prefs.getBoolean("taskNotifications", false)
     val motion get() = prefs.getBoolean("motion", true)
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -27,6 +28,8 @@ class LocalStore(private val context: Context) {
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
         }.generateKey()
     }
+    internal val sessionIdentity get() = prefs.getString("session", "").orEmpty()
+    internal val sessionValid get() = prefs.getLong("sessionExpiresAt", 0) > System.currentTimeMillis()
     fun session(): String { return try {
         if (prefs.getLong("sessionExpiresAt", 0) <= System.currentTimeMillis()) return ""
         val stored = prefs.getString("session", null) ?: return ""
@@ -44,6 +47,14 @@ class LocalStore(private val context: Context) {
     fun signOut() { prefs.edit { remove("token"); remove("session"); remove("sessionExpiresAt") } }
     fun theme(value: String) { prefs.edit { putString("theme", value) } }
     fun accent(value: String) { prefs.edit { putString("accent", value) } }
+    fun taskNotifications(value: Boolean) { prefs.edit { putBoolean("taskNotifications", value) } }
+    fun notifiedTasks(endpoint: String, username: String): List<String> = try {
+        WireJson.parseToJsonElement(prefs.getString("notified:" + favoriteKey(endpoint, username), "[]").orEmpty()).jsonArray.map { it.jsonPrimitive.content }
+    } catch (_: Exception) { emptyList() }
+    @android.annotation.SuppressLint("UseKtx")
+    fun notifiedTasks(endpoint: String, username: String, keys: List<String>) {
+        check(prefs.edit().putString("notified:" + favoriteKey(endpoint, username), JsonArray(keys.takeLast(256).map(::JsonPrimitive)).toString()).commit())
+    }
     fun motion(value: Boolean) { prefs.edit { putBoolean("motion", value) } }
     fun queue(endpoint: String, username: String): QueueSnapshot = try {
         parseQueue(WireJson.parseToJsonElement(prefs.getString("queue:" + favoriteKey(endpoint, username), "{}").orEmpty()).jsonObject)

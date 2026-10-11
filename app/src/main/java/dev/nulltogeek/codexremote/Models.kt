@@ -40,6 +40,7 @@ data class ScreenState(
     val host: String = "Your computer", val projects: List<Project> = emptyList(),
     val assignments: Map<String, String> = emptyMap(), val chats: List<Chat> = emptyList(),
     val favoriteChats: List<Chat> = emptyList(), val favoriteProjectIds: Set<String> = emptySet(),
+    val taskNotifications: Boolean = false, val notificationMessage: String = "",
     val passwordChangeAvailable: Boolean = false, val passwordChanging: Boolean = false,
     val passwordMessage: String = "", val passwordChanged: Boolean = false,
     val activeCursor: String? = null, val archivedCursor: String? = null,

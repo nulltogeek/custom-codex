@@ -199,6 +199,27 @@ class LibraryUiTest {
         assertTrue(LocalStore(compose.activity).favorites(endpoint, username).first.isEmpty())
     }
 
+    @Test fun taskNotificationsCanBeToggledAndPermissionFeedbackIsVisible() {
+        val enabled = mutableStateOf(false)
+        var settingsOpened = false
+        render { TaskNotificationSettings(enabled.value, "Allow notifications in Android Settings.", change = { enabled.value = it }, openSettings = { settingsOpened = true }) }
+        compose.onNodeWithTag("task-notifications").assertIsOff().performClick().assertIsOn()
+        compose.onNodeWithText("Allow notifications in Android Settings.").assertIsDisplayed()
+        compose.onNodeWithText("Android notification settings").performClick()
+        compose.runOnIdle { assertTrue(settingsOpened) }
+        compose.onNodeWithTag("task-notifications").performClick().assertIsOff()
+    }
+
+    @Test fun completedTaskIdentityStorageIsIsolatedByServerAndAccount() {
+        val store = LocalStore(compose.activity)
+        val endpoint = "https://notification-fixture.invalid"
+        store.notifiedTasks(endpoint, "owner", listOf("completed-turn"))
+        assertEquals(listOf("completed-turn"), LocalStore(compose.activity).notifiedTasks(endpoint, "owner"))
+        assertTrue(store.notifiedTasks(endpoint, "other").isEmpty())
+        assertTrue(store.notifiedTasks("https://another-fixture.invalid", "owner").isEmpty())
+        store.notifiedTasks(endpoint, "owner", emptyList())
+    }
+
     @Test fun passwordFormRequiresMatchingValuesAndClearsFieldsOnSuccess() {
         val changed = mutableStateOf(false)
         var submitted: Pair<String, String>? = null
