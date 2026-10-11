@@ -3,7 +3,7 @@ package dev.nulltogeek.codexremote
 import kotlinx.serialization.json.*
 
 internal fun commandStatus(item: TimelineItem): String = when (item.status) {
-    "inProgress", "running" -> "Running"
+    "inProgress", "running" -> if (item.turnStatus in listOf("completed", "failed", "interrupted")) "Stopped" else "Running"
     "completed" -> "Completed"
     "failed" -> "Failed"
     "declined" -> "Declined"

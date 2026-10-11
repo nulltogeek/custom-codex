@@ -368,7 +368,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             val active = state.selectedChat?.status == "active"
-            StatusDot(active); Spacer(Modifier.width(6.dp)); Text(when {
+            CommandActivity(state)
+            Text(when {
                 state.pending.any { it.params.text("threadId") == state.selectedChat?.id } -> "Waiting for input"
                 active -> "Running on your computer"
                 state.selectedChat?.archived == true -> "Archived conversation"

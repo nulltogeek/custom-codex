@@ -5,6 +5,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ChatPresentationTest {
+    @Test fun heartbeatDistinguishesRunningCompletedFailedAndInterruptedCommands() {
+        val running = TimelineItem("cmd", "commandExecution", "", status = "inProgress", turnStatus = "inProgress")
+        assertEquals("Running", commandStatus(running))
+        assertEquals("Completed", commandStatus(running.copy(status = "completed")))
+        assertEquals("Failed", commandStatus(running.copy(status = "failed")))
+        assertEquals("Stopped", commandStatus(running.copy(turnStatus = "interrupted")))
+        assertEquals("Stopped", commandStatus(running.copy(turnStatus = "completed")))
+    }
     private fun raw(value: String) = WireJson.parseToJsonElement(value).jsonObject
     private fun history(status: String = "completed") = parseTimeline(raw("""{"turns":[{"id":"t1","status":"$status","items":[
         {"id":"u","type":"userMessage","content":[{"type":"text","text":"Fix the app"}]},

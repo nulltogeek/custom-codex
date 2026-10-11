@@ -11,6 +11,11 @@ finished turn.
 Use the copy icon beside YOU or CODEX to copy the full original message text,
 including Markdown and text beyond the current display limit.
 
+The heart beside the conversation status pulses while work runs. Tap it to see
+running commands first, followed by finished commands from loaded history.
+Each command's output can be expanded separately. The heart remains available
+after work finishes, and disables its animation when Animations is off.
+
 Each finished turn has one collapsed changes summary below its final reply.
 Expand the summary to see its files, then tap a file to inspect its diff.
 Collapse the summary to hide its files again. When the server supplies a cumulative turn diff, it replaces

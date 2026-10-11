@@ -304,6 +304,24 @@ class RemoteUiTest {
         }
     }
 
+    @Test fun heartbeatOpensRunningAndFinishedCommandsWithoutReasoning() {
+        val state = mutableStateOf(sample().copy(selectedChat = Chat("pulse", "Activity", "", "", "active"),
+            timeline = listOf(TimelineItem("done", "commandExecution", "Completed output", "git status", "completed"),
+                TimelineItem("running", "commandExecution", "Live output", "gradle test", "inProgress", turnStatus = "inProgress"),
+                TimelineItem("reason", "reasoning", "Private reasoning"))))
+        render(state)
+        compose.onNodeWithTag("work-heartbeat").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Command activity").assertIsDisplayed()
+        compose.onNodeWithText("1 running · 1 finished").assertIsDisplayed()
+        compose.onNodeWithText("Private reasoning").assertDoesNotExist()
+        val sheet = hasAnyAncestor(hasTestTag("activity-sheet"))
+        compose.onNode(hasText("gradle test") and sheet).assertIsDisplayed().performClick()
+        compose.onNode(hasText("Live output") and sheet).assertIsDisplayed()
+        compose.onNode(hasText("git status") and sheet).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Close command activity").performClick()
+        compose.onNodeWithTag("activity-sheet").assertDoesNotExist()
+    }
+
     @Test fun cataloguePrefetchesAtTheEndAndErrorsWaitForRetry() {
         val state = mutableStateOf(sample().copy(activeCursor = "page2"))
         var calls = 0
