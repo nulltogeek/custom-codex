@@ -284,6 +284,26 @@ class RemoteUiTest {
         compose.onNodeWithText("app.kt").assertDoesNotExist()
     }
 
+    @Test fun messageCopyButtonsCopyFullOriginalTextIncludingMarkdown() {
+        val original = "**Full reply**\n" + "Long reply content. ".repeat(400)
+        val state = mutableStateOf(sample().copy(selectedChat = Chat("copy", "Copy messages", "", ""),
+            timeline = listOf(TimelineItem("user-copy", "userMessage", "My original message"),
+                TimelineItem("codex-copy", "agentMessage", original))))
+        render(state)
+        compose.onNodeWithTag("history-list").performScrollToIndex(0)
+        compose.onNodeWithTag("copy-message:codex-copy").performScrollTo().performClick()
+        compose.runOnIdle {
+            val clipboard = compose.activity.getSystemService(android.content.ClipboardManager::class.java)
+            assertEquals(original, clipboard.primaryClip!!.getItemAt(0).text.toString())
+        }
+        compose.onNodeWithTag("history-list").performScrollToIndex(1)
+        compose.onNodeWithTag("copy-message:user-copy").performClick()
+        compose.runOnIdle {
+            val clipboard = compose.activity.getSystemService(android.content.ClipboardManager::class.java)
+            assertEquals("My original message", clipboard.primaryClip!!.getItemAt(0).text.toString())
+        }
+    }
+
     @Test fun cataloguePrefetchesAtTheEndAndErrorsWaitForRetry() {
         val state = mutableStateOf(sample().copy(activeCursor = "page2"))
         var calls = 0

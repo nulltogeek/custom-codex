@@ -27,12 +27,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
@@ -429,6 +431,9 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 @Composable internal fun MessageItem(item: TimelineItem, showDiff: (Change) -> Unit, loadImage: suspend (String) -> ByteArray) {
     var visibleLimit by rememberSaveable(item.id) { mutableIntStateOf(6000) }
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
+    var copied by remember(item.id, item.text) { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
+    LaunchedEffect(copied) { if (copied) { kotlinx.coroutines.delay(1500); copied = false } }
     val user = item.type == "userMessage"; val tool = item.type !in listOf("userMessage", "agentMessage", "finalChanges", "error")
     val finalChanges = item.type == "finalChanges"
     val label = if (user) "YOU" else if (item.type == "finalChanges") "CHANGES" else if (item.type == "error") "ERROR" else if (!tool) "CODEX" else if (item.type == "commandExecution") "COMMAND" else item.type.uppercase()
@@ -443,7 +448,14 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     }
                     Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (finalChanges) { if (expanded) "Collapse changes" else "Expand changes" } else if (expanded) "Collapse $label" else "Expand $label")
                 }
-            } else Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+            } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                if (item.type in listOf("userMessage", "agentMessage") && item.text.isNotBlank()) IconButton(
+                    onClick = { clipboard.setText(AnnotatedString(item.text)); copied = true },
+                    modifier = Modifier.size(48.dp).testTag("copy-message:${item.id}")
+                ) { Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
+                    if (copied) "Message copied" else if (user) "Copy your message" else "Copy Codex message", Modifier.size(18.dp)) }
+            }
             if ((!tool && !finalChanges) || expanded) {
                 Column(if (tool) Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()) else Modifier,
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {

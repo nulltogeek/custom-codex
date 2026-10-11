@@ -8,6 +8,9 @@ status and approval/input buttons remain available while work is in progress.
 Older messages without a message phase use the last assistant reply from each
 finished turn.
 
+Use the copy icon beside YOU or CODEX to copy the full original message text,
+including Markdown and text beyond the current display limit.
+
 Each finished turn has one collapsed changes summary below its final reply.
 Expand the summary to see its files, then tap a file to inspect its diff.
 Collapse the summary to hide its files again. When the server supplies a cumulative turn diff, it replaces
