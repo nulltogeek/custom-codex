@@ -1,22 +1,28 @@
 # Username and password login
 
-The deployed standalone backend and Android APK 0.6.0 use username/password login at **https://codex.geeksun.ir**. The phone still needs WireGuard and VPN DNS. No pairing token needs to be entered.
+The deployed standalone backend and Android APK 0.7.0 use username/password login at **https://codex.geeksun.ir**. The phone still needs WireGuard and VPN DNS. No pairing token needs to be entered.
 
 ## Sign in
 
-1. Install the new `artifacts/codex-remote-release.apk`, or use **Settings → App updates** if you already have the updater. It upgrades the existing personal release package (version code 7) with the same signing identity. Previous APKs are preserved under `artifacts/v0.1.0/`, `artifacts/v0.2.0/`, `artifacts/v0.3.0/`, `artifacts/v0.4.0/` `artifacts/v0.4.1/` and `artifacts/v0.5.0/`. See [in-app updates](in-app-updates.md) for current checks and [chat loading and composer changes](mobile-0.6.0.md) for its features.
+1. Install the new `artifacts/codex-remote-release.apk`, or use **Settings → App updates** if you already have the updater. It upgrades the existing personal release package (version code 8) with the same signing identity. Previous APKs are preserved under `artifacts/v0.1.0/`, `artifacts/v0.2.0/`, `artifacts/v0.3.0/`, `artifacts/v0.4.0/`, `artifacts/v0.4.1/`, `artifacts/v0.5.0/` and `artifacts/v0.6.0/`. See [in-app updates](in-app-updates.md) for current checks and [chat loading and composer changes](mobile-0.6.0.md) for history features, plus [favorites, swipe archive and password changes](mobile-0.7.0.md).
 2. View the initial login privately on this Linux machine:
 
    ```bash
    vim /home/nulltogeek/.local/share/custom-codex/initial-login.json
    ```
 
-   The username is `nulltogeek`. Enter the file's password in the app's masked **Password** field, using server URL `https://codex.geeksun.ir`, then tap **Sign in**. Do not send the password in chat. This owner-only file is a local reference; editing it alone does not change the active login.
+   The username is `nulltogeek`. After an in-app password change use your new password; the initial reference is obsolete. Otherwise enter the file's password in the app's masked **Password** field, using server URL `https://codex.geeksun.ir`, then tap **Sign in**. Do not send the password in chat. This owner-only file is a local reference; editing it alone does not change the active login.
 3. Use **Settings → Sign out** to revoke this phone's session. A successful sign-out also closes its authenticated WebSockets. If offline, the phone clears its local session and reports that server revocation could not be completed.
 
 The older APK's saved pairing token is ignored by the new client and rejected by the deployed backend. An upgrade therefore requires a fresh sign-in.
 
 ## Password changes
+
+Use **Settings → Change password** while connected. Enter the current password and the matching new password twice. Use a different password with at least 12 characters and at most 1024 UTF-8 bytes; spaces are significant. This applies immediately without a service restart. This phone stays signed in; other sessions close while running work continues. The server saves only a salted hash, retaining a private backup of the old hash. See [the 0.7.0 guide](mobile-0.7.0.md) for validation and session behavior.
+
+The initial-login file remains the original provisioning reference and will no longer authenticate after an in-app password change. Save your new password privately. Local verification tools accept a current owner-only JSON login reference through `CODEX_INITIAL_LOGIN_FILE`; do not send its contents in chat.
+
+### Local owner recovery/reset
 
 To choose another password, edit the private JSON file using `vim`, retaining the `username` and `password` fields. Passwords must be at least 12 characters and no more than 1024 bytes; spaces are significant. Then apply the file from this repository:
 

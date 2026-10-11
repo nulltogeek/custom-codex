@@ -114,3 +114,11 @@ The fixture writes synthetic private app data and is guarded against physical-de
 4. Test physical Android 11+ lifecycle/offline/reconnect behavior and benchmark scrolling plus streaming on hardware. `adb devices -l` showed only the emulator. The 95% frame-budget criterion remains unmet in software emulation and unverified on hardware.
 
 These items remain open in the [implementation checklist](implementation-plan.md). The APK is delivered, but full acceptance and the implementation goal are not marked complete.
+
+## 0.7.0 favorites and account controls
+
+[The 0.7.0 guide](mobile-0.7.0.md) records the exact tests and limitations for right-swipe archive, local chat/project Favorites and in-app password changes. All 42 backend tests and 43 Android JVM tests passed, lint is clean, and debug/release/instrumentation APKs build. The idle deployed service was restarted once to enable the endpoint. HTTPS inventory/event/reconnect/revocation checks and password-route rejection/session-retention checks passed; the owner's actual password was unchanged. Both APK channels are published with matching 0.6.0 signing identities and valid delivery checksums. Physical-phone behavior and actual owner-account password changes remain unverified.
+
+`node scripts/verify-app-update.mjs https://codex.geeksun.ir --local` passed complete authenticated downloads of both 0.7.0 channels, exact size/SHA-256 and local-metadata checks, plus unauthorized/browser-Origin rejection (`artifacts/v0.7.0-update-proxy.json`).
+
+All five focused Android 11 UI checks passed in 142.12 seconds, covering swipe direction/disablement, saved-chat Favorites, account/server persistence isolation, password confirmation/success and project Favorites at 320 dp. Both APK upgrades installed after recovering the software emulator and switching from stalled streamed installs to file-based installs. The feature guide records the emulator failures and workaround.

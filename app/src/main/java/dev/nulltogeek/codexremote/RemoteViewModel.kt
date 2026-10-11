@@ -39,6 +39,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             val token = store.session()
             mutable.update { it.copy(signedIn = token.isNotEmpty(), chats = cachedList.mapNotNull { r -> (r as? JsonObject)?.let { o -> parseChat(o, o.text("cachedArchived") == "true") } }) }
             applyInventory(cachedInventory)
+            loadFavorites()
             connectIfForeground()
         }
         viewModelScope.launch {
@@ -91,7 +92,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         // Verify the session before saving it; the password is never persisted.
         val host = rpc.get("/v1/host")
         store.signIn(cleaned, session)
-        mutable.update { it.copy(endpoint = cleaned, username = session.username, signedIn = true, host = host.text("name"), notice = null) }
+        mutable.update { it.copy(endpoint = cleaned, username = session.username, signedIn = true, host = host.text("name"),
+            passwordChangeAvailable = host.obj("capabilities")["passwordChange"]?.jsonPrimitive?.booleanOrNull == true, notice = null) }
+        loadFavorites()
         connectIfForeground()
     }
     private fun clearSession(notice: String? = null) {
@@ -110,6 +113,39 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun theme(value: String) { store.theme(value); mutable.update { it.copy(theme = value) } }
     fun accent(value: String) { store.accent(value); mutable.update { it.copy(accent = value) } }
     fun motion(value: Boolean) { store.motion(value); mutable.update { it.copy(motion = value) } }
+    private fun loadFavorites() {
+        val current = mutable.value
+        val (chats, projects) = store.favorites(current.endpoint, current.username)
+        mutable.update { it.copy(favoriteChats = chats, favoriteProjectIds = projects) }
+    }
+    private fun saveFavorites() {
+        val current = mutable.value
+        store.favorites(current.endpoint, current.username, current.favoriteChats, current.favoriteProjectIds)
+    }
+    fun favorite(chat: Chat) {
+        mutable.update { it.copy(favoriteChats = if (it.favoriteChats.any { c -> c.id == chat.id }) it.favoriteChats.filter { c -> c.id != chat.id } else it.favoriteChats + chat.copy(projectId = it.assignments[chat.id] ?: chat.projectId)) }
+        saveFavorites()
+    }
+    fun favorite(project: Project) {
+        mutable.update { it.copy(favoriteProjectIds = if (project.id in it.favoriteProjectIds) it.favoriteProjectIds - project.id else it.favoriteProjectIds + project.id) }
+        saveFavorites()
+    }
+    fun passwordFormOpened() { mutable.update { it.copy(passwordMessage = "", passwordChanged = false) } }
+    fun changePassword(currentPassword: String, newPassword: String) {
+        val initial = mutable.value
+        if (!initial.signedIn || initial.connection != "Connected" || initial.passwordChanging) return
+        mutable.update { it.copy(passwordChanging = true, passwordChanged = false, passwordMessage = "") }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                rpc.changePassword(currentPassword, newPassword)
+                mutable.update { it.copy(passwordChanged = true, passwordMessage = "Password changed. Other sessions have been signed out.") }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                else mutable.update { it.copy(passwordMessage = e.message ?: "Password change failed.") }
+            } finally { mutable.update { it.copy(passwordChanging = false) } }
+        }
+    }
     fun updateMessage(message: String) { mutable.update { it.copy(updateMessage = message) } }
     fun checkAppUpdate(automatic: Boolean = false) {
         val initial = mutable.value
@@ -200,7 +236,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun refreshAll() {
         mutable.update { it.copy(catalogRevision = it.catalogRevision + 1, catalogError = null) }
         val revision = mutable.value.catalogRevision
-        val host = rpc.get("/v1/host"); mutable.update { it.copy(host = host.text("name", "Your computer")) }
+        val host = rpc.get("/v1/host"); mutable.update { it.copy(host = host.text("name", "Your computer"),
+            passwordChangeAvailable = host.obj("capabilities")["passwordChange"]?.jsonPrimitive?.booleanOrNull == true) }
         val inventory = rpc.get("/v1/projects"); cachedInventory = inventory; applyInventory(inventory)
         val active = listPage(false, null); val archived = listPage(true, null)
         if (mutable.value.catalogRevision != revision) return
@@ -462,7 +499,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         mutable.update { it.copy(pending = it.pending.filter { r -> r.id != request.id }) }
     }
     fun archive(chat: Chat) = action {
-        rpc.call(if (chat.archived) "thread/unarchive" else "thread/archive", jsonObject("threadId" to chat.id)); refreshAll()
+        val current = mutable.value
+        val live = current.chats.find { it.id == chat.id } ?: current.selectedChat?.takeIf { it.id == chat.id } ?: chat
+        check(current.connection == "Connected") { "Connect to your computer to archive or restore a chat." }
+        check(live.status != "active" && current.pending.none { it.params.text("threadId") == chat.id }) { "Finish the running turn and pending requests before archiving this chat." }
+        rpc.call(if (live.archived) "thread/unarchive" else "thread/archive", jsonObject("threadId" to chat.id))
+        mutable.update { it.copy(favoriteChats = it.favoriteChats.map { c -> if (c.id == chat.id) c.copy(archived = !live.archived) else c }) }
+        saveFavorites(); refreshAll()
     }
     private fun applyEvents(events: List<JsonObject>) {
         var completedChat: String? = null
@@ -472,6 +515,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 if (lastEpoch.isNotEmpty() && event.text("_bridgeEpoch").isNotEmpty() && event.text("_bridgeEpoch") != lastEpoch) continue
                 val method = event.text("method"); val p = event.obj("params"); val threadId = p.text("threadId")
                 val sequence = (event["_bridgeSequence"] as? JsonPrimitive)?.longOrNull ?: 0
+                state = state.copy(favoriteChats = state.favoriteChats.map { chat -> if (chat.id != threadId) chat else when (method) {
+                    "thread/name/updated" -> chat.copy(title = p.text("threadName").ifEmpty { p.text("name").ifEmpty { chat.title } })
+                    "thread/status/changed" -> chat.copy(status = p.obj("status").text("type", "idle"))
+                    "turn/started", "turn/completed" -> chat.copy(status = if (method == "turn/started") "active" else "idle")
+                    "thread/project/updated" -> chat.copy(projectId = p.text("projectId").ifEmpty { null })
+                    else -> chat
+                } })
                 when (method) {
                     "bridge/requestPending" -> if (sequence > state.pendingSequence) state = state.copy(pending = (state.pending + PendingInput(p.text("requestId"), p.text("method"), p.obj("params"))).distinctBy { it.id }, pendingSequence = sequence)
                     "bridge/requestResolved" -> if (sequence > state.pendingSequence) state = state.copy(pending = state.pending.filter { it.id != p.text("requestId") }, pendingSequence = sequence)
@@ -491,8 +541,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                             titleSequence = if (selected) sequence else state.titleSequence)
                     }
                     "thread/project/updated" -> state = state.copy(assignments = if (p.text("projectId").isEmpty()) state.assignments - threadId else state.assignments + (threadId to p.text("projectId")))
-                    "thread/archived", "thread/unarchived" -> state = state.copy(chats = state.chats.map { if (it.id == threadId) it.copy(archived = method == "thread/archived") else it }, selectedChat = state.selectedChat?.let { if (it.id == threadId) it.copy(archived = method == "thread/archived") else it })
+                    "thread/archived", "thread/unarchived" -> state = state.copy(chats = state.chats.map { if (it.id == threadId) it.copy(archived = method == "thread/archived") else it },
+                        favoriteChats = state.favoriteChats.map { if (it.id == threadId) it.copy(archived = method == "thread/archived") else it },
+                        selectedChat = state.selectedChat?.let { if (it.id == threadId) it.copy(archived = method == "thread/archived") else it })
                     "turn/started", "turn/completed" -> {
+                        state = state.copy(chats = state.chats.map { if (it.id == threadId) it.copy(status = if (method == "turn/started") "active" else "idle") else it })
                         if (method == "turn/completed") completedChat = threadId
                         if (state.selectedChat?.id == threadId && sequence > state.statusSequence)
                             state = state.copy(selectedChat = state.selectedChat?.copy(status = if (method == "turn/started") "active" else "idle"), statusSequence = sequence)
@@ -517,9 +570,17 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             state
         }
         completedChat?.takeIf { it == mutable.value.selectedChat?.id }?.let { id -> action { loadThread(id) } }
+        if (events.any { it.text("method").startsWith("thread/") }) refreshFavoriteSummaries()
         if (events.any { it.text("method") == "project/changed" }) action { delay(100); val inventory = rpc.get("/v1/projects"); cachedInventory = inventory; applyInventory(inventory) }
     }
-    private fun saveCache() { store.saveCache(buildJsonObject { put("threads", cachedThreads); put("chats", cachedList); put("inventory", cachedInventory) }) }
+    private fun refreshFavoriteSummaries() {
+        mutable.update { state ->
+            val current = state.chats.associateBy { it.id }
+            state.copy(favoriteChats = state.favoriteChats.map { current[it.id] ?: it })
+        }
+        saveFavorites()
+    }
+    private fun saveCache() { refreshFavoriteSummaries(); store.saveCache(buildJsonObject { put("threads", cachedThreads); put("chats", cachedList); put("inventory", cachedInventory) }) }
     private fun action(block: suspend () -> Unit) = viewModelScope.launch(Dispatchers.IO) {
         mutable.update { it.copy(loading = true) }
         try { block() } catch (e: Exception) { if (e is CancellationException) throw e

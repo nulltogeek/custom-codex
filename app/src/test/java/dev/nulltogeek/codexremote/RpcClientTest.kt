@@ -99,6 +99,34 @@ class RpcClientTest {
         }
     }
 
+    @Test fun passwordChangePreservesSpacesAuthenticatesAndRejectsRedirects() = runBlocking {
+        MockWebServer().use { server ->
+            server.start(); val rpc = RpcClient(); val session = "s".repeat(43)
+            rpc.configure("http://127.0.0.1:${server.port}", session)
+            server.enqueue(MockResponse().setBody("{\"ok\":true}"))
+            rpc.changePassword("current password  ", " new password  ")
+            val request = server.takeRequest()
+            assertEquals("/v1/password", request.path); assertEquals("POST", request.method)
+            assertEquals("Bearer $session", request.getHeader("Authorization"))
+            val body = WireJson.parseToJsonElement(request.body.readUtf8()).jsonObject
+            assertEquals("current password  ", body.text("currentPassword")); assertEquals(" new password  ", body.text("newPassword"))
+            server.enqueue(MockResponse().setResponseCode(307).setHeader("Location", "/redirected"))
+            assertTrue(runCatching { rpc.changePassword("old", "new-long-password") }.exceptionOrNull() is IOException)
+            assertEquals("/v1/password", server.takeRequest().path)
+            assertEquals(2, server.requestCount)
+        }
+    }
+    @Test fun rejectedCurrentPasswordDoesNotExpireSessionAndResponseBodiesStayPrivate() = runBlocking {
+        MockWebServer().use { server ->
+            server.start(); val rpc = RpcClient(); rpc.configure("http://127.0.0.1:${server.port}", "s".repeat(43))
+            server.enqueue(MockResponse().setResponseCode(403).setBody("private account data"))
+            val failure = runCatching { rpc.changePassword("wrong", "new-long-password") }.exceptionOrNull()
+            assertEquals("Current password was rejected.", failure?.message)
+            assertFalse(failure is SessionExpiredException)
+            server.enqueue(MockResponse().setResponseCode(401))
+            assertTrue(runCatching { rpc.changePassword("old", "new-long-password") }.exceptionOrNull() is SessionExpiredException)
+        }
+    }
     @Test fun rejectedLoginAndExpiredSessionHaveActionableErrorsWithoutResponseBodies() = runBlocking {
         MockWebServer().use { server ->
             server.start(); val endpoint = "http://127.0.0.1:${server.port}"

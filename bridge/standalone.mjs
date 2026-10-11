@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { isIP } from 'node:net';
 import { Broker, HUMAN_REQUESTS } from './broker.mjs';
 import { createHost } from './host.mjs';
-import { loginAccount, createAuthentication } from './auth.mjs';
+import { loginAccount, createAuthentication, savePasswordAccount } from './auth.mjs';
 
 const execute = promisify(execFile);
 
@@ -34,7 +34,9 @@ export async function startStandalone({
       backendVersion = stdout.match(/\b\d+\.\d+\.\d+[a-zA-Z0-9.-]*/)?.[0] ?? 'unknown';
     } catch { throw Error('Configured Codex binary is unavailable; check CODEX_REAL_CLI_PATH'); }
   }
-  const authentication = createAuthentication(loginAccount(accountFile, initialLoginFile, username));
+  const authentication = createAuthentication(loginAccount(accountFile, initialLoginFile, username), {
+    persistAccount: account => savePasswordAccount(accountFile, account),
+  });
   const backend = spawn(backendPath, backendArgs, { cwd, env: environment, stdio: ['pipe', 'pipe', 'inherit'] });
   const exited = new Promise(resolveExit => backend.once('close', (code, signal) => resolveExit({ code, signal })));
   let initialized, initializationFailed, stopping = false, closing;

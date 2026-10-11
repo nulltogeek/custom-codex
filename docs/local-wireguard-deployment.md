@@ -2,7 +2,7 @@
 
 The app-server runs on `/home/nulltogeek`'s Linux machine. The VPS at `79.175.177.57` runs only the existing Nginx reverse proxy. The Android URL is **https://codex.geeksun.ir**. The desktop can be closed; the Linux machine, user service and WireGuard tunnel must remain available.
 
-As of October 11, 2026, APK 0.6.0 and the deployed standalone server use **username/password login**. See [chat loading and composer improvements](mobile-0.6.0.md), [the current in-app update guide](in-app-updates.md) and [login guide](username-password-login.md); the older token-based verification below is historical.
+As of October 11, 2026, APK 0.7.0 and the deployed standalone server use **username/password login**. See [favorites, swipe archive and password changes](mobile-0.7.0.md), [chat loading and composer improvements](mobile-0.6.0.md), [the current in-app update guide](in-app-updates.md) and [login guide](username-password-login.md); the older token-based verification below is historical.
 
 The model-provider HTTP 401 was repaired later on October 11. Real replies and a follow-up now pass through the deployed HTTPS/WSS endpoint; see [the authentication repair](#provider-authentication-repaired-on-october-11-2026).
 
@@ -41,7 +41,7 @@ Sharing the Codex home shares saved configuration/history. Standalone and ordina
 
 1. Enable the phone's existing private WireGuard connection. It must reach the VPS private endpoint and use VPN DNS for `codex.geeksun.ir`. On the inspected Linux host, that name resolves to `10.42.42.1`.
 2. Install `artifacts/codex-remote-release.apk` using Android's normal APK installer. Android 11 or newer is required. For an authorized USB device, `adb install -r artifacts/codex-remote-release.apk` installs or upgrades it while retaining application data.
-3. Open the initial login reference with `vim ~/.local/share/custom-codex/initial-login.json`. Enter username `nulltogeek` and its password in the APK's sign-in fields, with server URL `https://codex.geeksun.ir`. Never put the password in a URL or chat message. The APK manages its authenticated `wss://codex.geeksun.ir/v1/rpc` session internally and stores the session encrypted with Android Keystore.
+3. Open the initial login reference with `vim ~/.local/share/custom-codex/initial-login.json`. Enter username `nulltogeek` and its password (or your new password after changing it in Settings) in the APK's sign-in fields, with server URL `https://codex.geeksun.ir`. Never put the password in a URL or chat message. The APK manages its authenticated `wss://codex.geeksun.ir/v1/rpc` session internally and stores the session encrypted with Android Keystore.
 
 Nginx preserves the existing VPN-only access policy (`192.168.1.0/24` and the observed wg-easy masquerade source `10.42.42.42`). It forwards WebSocket upgrades with buffering disabled and a one-hour read timeout. Public non-VPN access was tested and returned 403. Backend inventory/RPC also requires a session issued by username/password login. The TLS certificate was verified without disabling validation; the existing wildcard certificate expires December 18, 2026. Certificate renewal remains the existing proxy administrator's responsibility.
 

@@ -100,15 +100,17 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
     res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
     const reply = (status, body) => { res.writeHead(status); res.end(JSON.stringify(body)); };
     if (req.url === '/healthz' && req.method === 'GET' && !req.headers.origin) return reply(200, { ok: true });
-    if (req.url === '/v1/login' && authentication) {
+    const passwordChange = req.url === '/v1/password';
+    if ((req.url === '/v1/login' || passwordChange) && authentication) {
       if (req.headers.origin) return reply(401, { error: 'Authentication required' });
+      if (passwordChange && !authorized(req)) return reply(401, { error: 'Authentication required' });
       if (req.method !== 'POST') return reply(405, { error: 'Method not allowed' });
       if ((req.headers['content-type'] ?? '').split(';')[0].trim() !== 'application/json') return reply(415, { error: 'Use application/json' });
       let size = 0, chunks = [];
       req.setTimeout(15000, () => req.destroy());
       req.on('data', chunk => {
         size += chunk.length;
-        if (size > 4096) { if (!res.writableEnded) reply(413, { error: 'Login request too large' }); chunks = []; }
+        if (size > (passwordChange ? 16384 : 4096)) { if (!res.writableEnded) reply(413, { error: 'Account request too large' }); chunks = []; }
         else if (!res.writableEnded) chunks.push(chunk);
       });
       req.on('end', async () => {
@@ -116,12 +118,12 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
         try {
           let input;
           try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-          catch { return reply(400, { error: 'Invalid login request' }); }
-          reply(200, await authentication.login(input, req.socket.remoteAddress));
+          catch { return reply(400, { error: 'Invalid account request' }); }
+          reply(200, passwordChange ? await authentication.changePassword(req, input, req.socket.remoteAddress) : await authentication.login(input, req.socket.remoteAddress));
         } catch (error) {
           const status = error.status ?? 503;
           if (status === 429) res.setHeader('Retry-After', '600');
-          reply(status, { error: error.status ? error.message : 'Login temporarily unavailable' });
+          reply(status, { error: error.status ? error.message : 'Account service temporarily unavailable' });
         }
       });
       req.on('error', () => {});
@@ -141,7 +143,7 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
     }
     if (req.url === '/v1/host') return reply(200, { name: hostname(), backendPid, backendVersion,
       bridgeVersion: '1', runtimeMode, codexHome, configFile: join(codexHome, 'config.toml'), ready: broker.ready, epoch: broker.epoch,
-      capabilities: { attachments: true, appUpdates: true, maxUploadBytes: 20 * 1024 * 1024, mobileModes: ['codex', 'chat'], accessModes: ['host', 'ask', 'read-only', 'full'] },
+      capabilities: { passwordChange: Boolean(authentication?.canChangePassword), attachments: true, appUpdates: true, maxUploadBytes: 20 * 1024 * 1024, mobileModes: ['codex', 'chat'], accessModes: ['host', 'ask', 'read-only', 'full'] },
       initialization: { resultReceived: Boolean(broker.initResult), notificationReceived: broker.desktopNotificationSeen, errorCode: broker.initializationError } });
     if (req.url === '/v1/projects') return reply(200, readProjects(codexHome, liveProjects()));
     if (req.url === '/v1/snapshot') return reply(200, broker.snapshot());

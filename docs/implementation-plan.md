@@ -14,6 +14,7 @@ The user selected a standalone server on this Linux machine using the existing C
 - [x] Deliver APK 0.4.1 with authenticated, verified in-app updates; test emulator installer confirmation and complete proxy downloads.
 - [x] Deliver compact 0.5.0 chat/project rows and a single-row composer toolbar; verify narrow screens, larger text, project paths, model/access/effort controls and keyboard visibility.
 - [x] Deliver 0.6.0 scroll history/catalogue loading, collapsible code/tool outputs, image previews/cancel and unified chat settings; record UI and publication verification.
+- [x] Deliver 0.7.0 right-swipe archive, chat/project favorites and in-app password changes; record final verification and publication.
 - [ ] Verify a real model-triggered approval answered from the phone.
 - [ ] Verify an actual phone through WireGuard and measure hardware performance.
 

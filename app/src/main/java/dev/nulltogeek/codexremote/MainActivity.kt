@@ -129,7 +129,10 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             }, actions = {
                 if (state.signedIn) {
                     IconButton(onClick = { vm.refresh() }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Refresh, "Refresh history") }
-                    if (state.selectedChat != null) IconButton(onClick = { confirmArchive = state.selectedChat }) { Icon(if (state.selectedChat.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, if (state.selectedChat.archived) "Restore chat" else "Archive chat") }
+                    state.selectedChat?.let { chat ->
+                        FavoriteButton(state.favoriteChats.any { it.id == chat.id }, "chat ${chat.title}") { vm.favorite(chat) }
+                        IconButton(onClick = { confirmArchive = chat }, enabled = canArchive(state, chat)) { Icon(if (chat.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, if (chat.archived) "Restore chat" else "Archive chat") }
+                    }
                 }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
         }, bottomBar = {
@@ -168,7 +171,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 screen.startsWith("chat:") && state.selectedChat != null -> key(state.selectedChat.id) { Conversation(state, vm) { approval = it } }
                 screen == "projects" -> ProjectScreen(state, vm)
                 screen == "settings" -> SettingsScreen(state, vm)
-                else -> ChatsScreen(state, vm, approval = { approval = it })
+                else -> ChatsScreen(state, vm, approval = { approval = it }, archive = { confirmArchive = it })
             } }
         }
     }
@@ -200,19 +203,22 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
 }
 
-@Composable internal fun ChatsScreen(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit, loadMore: (Boolean) -> Unit = { vm.loadMore(it) }) {
+@Composable internal fun ChatsScreen(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit, loadMore: (Boolean) -> Unit = { vm.loadMore(it) },
+    archive: (Chat) -> Unit = {}, favorite: (Chat) -> Unit = { vm.favorite(it) }) {
     val query = state.searchTerm; var tab by rememberSaveable { mutableIntStateOf(0) }
     val project = state.projects.find { it.id == state.projectFilter }
-    val list = remember(state.chats, query, tab, state.projectFilter, state.assignments, state.projects) {
-        state.chats.filter { chat ->
+    val list = remember(state.chats, state.favoriteChats, query, tab, state.projectFilter, state.assignments, state.projects) {
+        val favorites = state.favoriteChats.map { it.id }.toSet()
+        val source = if (tab == 3) (state.chats + state.favoriteChats).distinctBy { it.id } else state.chats
+        source.filter { chat ->
             val agent = chat.source == "subAgent" || chat.parentId != null
-            val category = when (tab) { 1 -> chat.archived; 2 -> agent; else -> !chat.archived && !agent }
+            val category = when (tab) { 1 -> chat.archived; 2 -> agent; 3 -> chat.id in favorites; else -> !chat.archived && !agent }
             val projectMatch = project == null || state.assignments[chat.id] == project.id || chat.projectId == project.id || (state.assignments[chat.id] == null && project.roots.any { it == chat.cwd })
             category && projectMatch && (chat.title.contains(query, true) || chat.preview.contains(query, true))
         }
     }
     val listState = rememberLazyListState()
-    val cursor = if (tab == 1) state.archivedCursor else state.activeCursor
+    val cursor = if (tab == 3) null else if (tab == 1) state.archivedCursor else state.activeCursor
     LaunchedEffect(cursor, tab, query, state.projectFilter, state.catalogError, state.connection, state.catalogLoading) {
         if (cursor != null && state.catalogError == null && !state.catalogLoading && state.connection == "Connected")
             snapshotFlow { listState.layoutInfo.totalItemsCount > 0 && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= listState.layoutInfo.totalItemsCount - 4 }
@@ -241,11 +247,13 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             }
         }
         item { CompactSearch(query, vm::search) }
-        item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("Recent", "Archived", "Agent chats").forEachIndexed { i, label -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(label) }) } } }
-        if (list.isEmpty()) item { EmptyState(if (query.isNotEmpty()) "No matching chats" else "No chats here yet", "Choose a project or start a conversation.") }
+        item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(0 to "Recent", 3 to "Favorites", 1 to "Archived", 2 to "Agent chats").forEach { (i, label) -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(label) }) } } }
+        if (list.isEmpty()) item { EmptyState(if (query.isNotEmpty()) "No matching chats" else if (tab == 3) "No favorite chats yet" else "No chats here yet", if (tab == 3) "Tap a chat's star to keep it here." else "Choose a project or start a conversation.") }
         items(list, key = { it.id }, contentType = { "chat" }) { chat ->
             val p = state.projects.find { it.id == (state.assignments[chat.id] ?: chat.projectId) } ?: state.projects.find { chat.cwd in it.roots }
-            ChatRow(chat, p?.name ?: "No project", onClick = { vm.open(chat) })
+            SwipeArchiveRow(chat, canArchive(state, chat), archive = { archive(chat) }) {
+                ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) })
+            }
         }
         if (cursor != null) item(key = "catalog-footer") {
             PageLoader(state.catalogLoading, state.catalogError, "More chats load as you scroll", state.connection == "Connected") { loadMore(tab == 1) }
@@ -270,7 +278,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
 }
 
-@Composable private fun ChatRow(chat: Chat, project: String, onClick: () -> Unit) {
+@Composable private fun ChatRow(chat: Chat, project: String, favorite: Boolean, onFavorite: () -> Unit, onClick: () -> Unit) {
     Surface(onClick = onClick, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(10.dp)) {
@@ -287,15 +295,19 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 if (chat.preview.isNotBlank() && chat.preview != chat.title) Text(chat.preview, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(project, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    if (chat.archived) Text("Archived", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (chat.status == "active") { StatusDot(true); Spacer(Modifier.width(4.dp)); Text("Running", style = MaterialTheme.typography.labelSmall) }
                 }
             }
+            FavoriteButton(favorite, "chat ${chat.title}", onFavorite)
         }
     }
 }
 
-@Composable private fun ProjectScreen(state: ScreenState, vm: RemoteViewModel) {
+@Composable internal fun ProjectScreen(state: ScreenState, vm: RemoteViewModel, favorite: (Project) -> Unit = { vm.favorite(it) }) {
     var folders by remember { mutableStateOf<Project?>(null) }
+    var favoritesOnly by rememberSaveable { mutableStateOf(false) }
+    val projects = if (favoritesOnly) state.projects.filter { it.id in state.favoriteProjectIds } else state.projects
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item {
             Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -306,7 +318,11 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 Text("${state.projects.size}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
             }
         }
-        items(state.projects, key = { it.id }) { project ->
+        item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(!favoritesOnly, { favoritesOnly = false }, label = { Text("All projects") })
+            FilterChip(favoritesOnly, { favoritesOnly = true }, label = { Text("Favorites") })
+        } }
+        items(projects, key = { it.id }) { project ->
             val count = state.chats.count { state.assignments[it.id] == project.id || it.projectId == project.id || it.cwd in project.roots }
             Surface(onClick = { vm.filterProject(project.id) }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
                 Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -319,11 +335,12 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                         Text(project.roots.firstOrNull() ?: "No folder", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("$count loaded chats" + if (project.roots.size > 1) " · ${project.roots.size} folders" else "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     }
+                    FavoriteButton(project.id in state.favoriteProjectIds, "project ${project.name}") { favorite(project) }
                     IconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat in ${project.name}", Modifier.size(20.dp)) }
                 }
             }
         }
-        if (state.projects.isEmpty()) item { EmptyState("No projects loaded", "Connect to your computer and refresh its project inventory.") }
+        if (projects.isEmpty()) item { EmptyState(if (favoritesOnly) "No favorite projects yet" else "No projects loaded", if (favoritesOnly) "Tap a project's star to keep it here." else "Connect to your computer and refresh its project inventory.") }
     }
     folders?.let { project -> AlertDialog(onDismissRequest = { folders = null }, title = { Text(project.name) },
         text = { SelectionContainer { Column(Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -442,6 +459,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 
 @Composable private fun SettingsScreen(state: ScreenState, vm: RemoteViewModel) {
     var signOut by remember { mutableStateOf(false) }
+    var password by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("APPEARANCE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -455,11 +473,17 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         Text("CONNECTED COMPUTER", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(state.host, fontWeight = FontWeight.SemiBold); Text(state.endpoint, style = MaterialTheme.typography.bodySmall); Text(state.connection, color = MaterialTheme.colorScheme.secondary)
         Text("Signed in as ${state.username}", style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(onClick = { signOut = true }, enabled = !state.loading && !state.updateDownloading) { Text("Sign out") }
+        OutlinedButton(onClick = { vm.passwordFormOpened(); password = true }, enabled = !state.passwordChanging && state.connection == "Connected" && state.passwordChangeAvailable) {
+            Icon(Icons.Outlined.Lock, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Change password")
+        }
+        if (!state.passwordChangeAvailable) Text("Update the computer's server to enable password changes.", style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = { signOut = true }, enabled = !state.loading && !state.updateDownloading && !state.passwordChanging) { Text("Sign out") }
         HorizontalDivider()
         Text("Codex Remote · ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
         Text("A personal Android client. Work runs on your computer using its permissions and existing Codex account. Keep the Codex server running and your computer awake.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+    if (password) ChangePasswordDialog(state.passwordChanging, state.passwordMessage, state.passwordChanged,
+        state.connection == "Connected", onDismiss = { password = false }, changePassword = vm::changePassword)
     if (signOut) AlertDialog(onDismissRequest = { signOut = false }, title = { Text("Sign out of this phone?") }, text = { Text("End this phone's session. Your conversations remain on your computer.") },
         confirmButton = { TextButton(onClick = { vm.signOut(); signOut = false }) { Text("Confirm sign out") } }, dismissButton = { TextButton(onClick = { signOut = false }) { Text("Cancel") } })
 }

@@ -115,3 +115,27 @@ test('explicit interface binding restricts the listener and keeps snapshots auth
   } finally { await runtime.close(); }
   await assert.rejects(startStandalone({ ...settings(), bindAddress: '0.0.0.0.example' }), /literal interface IP/);
 });
+
+test('standalone advertises password changes and reloads the changed account without rewriting the initial reference', { timeout: 8000 }, async () => {
+  const options = settings(); let runtime = await startStandalone(options);
+  const initial = readFileSync(runtime.initialLoginFile, 'utf8');
+  const current = JSON.parse(initial), nextPassword = 'standalone-new-test-password';
+  try {
+    const token = await login(runtime), base = `http://127.0.0.1:${runtime.port}`;
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    const host = await (await fetch(base + '/v1/host', { headers })).json();
+    assert.equal(host.capabilities.passwordChange, true);
+    const response = await fetch(base + '/v1/password', { method: 'POST', headers,
+      body: JSON.stringify({ currentPassword: current.password, newPassword: nextPassword }) });
+    assert.equal(response.status, 200);
+    assert.equal(runtime.backend.exitCode, null);
+    assert.equal(readFileSync(runtime.initialLoginFile, 'utf8'), initial);
+    assert.equal((await fetch(base + '/v1/host', { headers })).status, 200);
+    await runtime.close(); runtime = await startStandalone(options);
+    const newBase = `http://127.0.0.1:${runtime.port}`;
+    const attempt = password => fetch(newBase + '/v1/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: current.username, password }) });
+    assert.equal((await attempt(current.password)).status, 401);
+    assert.equal((await attempt(nextPassword)).status, 200);
+  } finally { await runtime.close(); }
+});

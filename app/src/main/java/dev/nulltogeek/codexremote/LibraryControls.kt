@@ -1,0 +1,89 @@
+package dev.nulltogeek.codexremote
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+
+internal fun canArchive(state: ScreenState, chat: Chat): Boolean = state.connection == "Connected" && !state.loading &&
+    !state.sending && chat.status != "active" && state.pending.none { it.params.text("threadId") == chat.id }
+
+@Composable internal fun FavoriteButton(favorite: Boolean, label: String, onClick: () -> Unit) {
+    IconButton(onClick) {
+        Icon(if (favorite) Icons.Filled.Star else Icons.Outlined.StarOutline,
+            if (favorite) "Remove $label from favorites" else "Add $label to favorites",
+            Modifier.size(20.dp), tint = if (favorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable internal fun SwipeArchiveRow(chat: Chat, enabled: Boolean, archive: () -> Unit, content: @Composable () -> Unit) {
+    val latestArchive by rememberUpdatedState(archive)
+    val latestEnabled by rememberUpdatedState(enabled)
+    val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { target ->
+        if (target == SwipeToDismissBoxValue.StartToEnd && latestEnabled) latestArchive()
+        // Confirmation owns the action; the row returns to its resting position.
+        false
+    }, positionalThreshold = { it * 0.35f })
+    SwipeToDismissBox(swipe, modifier = Modifier.testTag("archive-swipe:${chat.id}"),
+        enableDismissFromStartToEnd = enabled, enableDismissFromEndToStart = false, gesturesEnabled = enabled,
+        backgroundContent = {
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) {
+                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (chat.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, null)
+                    Spacer(Modifier.width(8.dp)); Text(if (chat.archived) "Restore" else "Archive")
+                }
+            }
+        }) { content() }
+}
+
+internal fun passwordValidation(current: String, next: String, confirmation: String): String? = when {
+    current.isEmpty() -> "Enter your current password."
+    next.length < 12 || next.toByteArray(Charsets.UTF_8).size > 1024 -> "Use at least 12 characters and at most 1024 bytes."
+    next == current -> "Choose a different password."
+    next != confirmation -> "New passwords do not match."
+    else -> null
+}
+
+@Composable internal fun ChangePasswordDialog(changing: Boolean, message: String, changed: Boolean, connected: Boolean,
+    onDismiss: () -> Unit, changePassword: (String, String) -> Unit) {
+    // Credentials never enter saved state, preferences, logs, or the history cache.
+    var current by remember { mutableStateOf("") }
+    var next by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
+    LaunchedEffect(changed) { if (changed) { current = ""; next = ""; confirmation = "" } }
+    val validation = passwordValidation(current, next, confirmation)
+    AlertDialog(onDismissRequest = { if (!changing) onDismiss() }, title = { Text("Change password") }, text = {
+        Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (!changed) {
+                Text("Other sessions will be signed out. This phone stays signed in and running work continues.", style = MaterialTheme.typography.bodySmall)
+                PasswordField("Current password", current, !changing) { current = it }
+                PasswordField("New password", next, !changing) { next = it }
+                PasswordField("Confirm new password", confirmation, !changing) { confirmation = it }
+                Text(if (next.isNotEmpty() && validation != null) validation else "Use at least 12 characters. Password spaces are preserved.", style = MaterialTheme.typography.bodySmall)
+            }
+            if (message.isNotBlank()) Text(message, color = if (changed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+            if (changing) LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+    }, confirmButton = {
+        if (changed) TextButton(onDismiss) { Text("Close") }
+        else TextButton(onClick = { changePassword(current, next) }, enabled = connected && !changing && validation == null) { Text(if (changing) "Saving…" else "Save password") }
+    }, dismissButton = { if (!changed) TextButton(onDismiss, enabled = !changing) { Text("Cancel") } })
+}
+
+@Composable private fun PasswordField(label: String, value: String, enabled: Boolean, change: (String) -> Unit) {
+    OutlinedTextField(value, change, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = true, enabled = enabled,
+        visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false))
+}

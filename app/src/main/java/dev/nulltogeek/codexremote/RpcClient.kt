@@ -65,6 +65,24 @@ class RpcClient {
             if (!it.isSuccessful && it.code != 401) throw IOException("Sign-out failed (HTTP ${it.code})")
         }
     }
+    suspend fun changePassword(currentPassword: String, newPassword: String) = withContext(Dispatchers.IO) {
+        val body = jsonObject("currentPassword" to currentPassword, "newPassword" to newPassword)
+            .toString().toRequestBody("application/json".toMediaType())
+        http.newBuilder().followRedirects(false).followSslRedirects(false).build()
+            .newCall(Request.Builder().url(endpoint + "/v1/password").header("Authorization", "Bearer $token").post(body).build())
+            .execute().use {
+                if (it.code == 401) throw SessionExpiredException()
+                if (!it.isSuccessful) throw IOException(when (it.code) {
+                    400 -> "Use a different password with at least 12 characters and at most 1024 bytes."
+                    403 -> "Current password was rejected."
+                    429 -> "Too many password attempts. Try again later."
+                    409 -> "Another password change occurred. Try again."
+                    404, 405, 501 -> "Update the computer's server to enable password changes."
+                    else -> "Password change failed (HTTP ${it.code})."
+                })
+                require(WireJson.parseToJsonElement(it.body?.string() ?: "{}").jsonObject["ok"]?.jsonPrimitive?.booleanOrNull == true) { "Invalid password change response" }
+            }
+    }
     suspend fun get(path: String): JsonObject = withContext(Dispatchers.IO) {
         http.newCall(Request.Builder().url(endpoint + path).header("Authorization", "Bearer $token").build()).execute().use {
             if (it.code == 401) throw SessionExpiredException()

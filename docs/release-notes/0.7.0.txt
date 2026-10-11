@@ -1,0 +1,3 @@
+Swipe chats to the right to archive or restore with confirmation.
+Star chats and projects and find them in their Favorites tabs. Saved favorite chats remain visible before older pages load.
+Change your password from Settings using your current password. This phone stays signed in; other sessions are signed out while running work continues.

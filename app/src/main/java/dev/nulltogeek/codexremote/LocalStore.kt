@@ -45,6 +45,23 @@ class LocalStore(private val context: Context) {
     fun theme(value: String) { prefs.edit { putString("theme", value) } }
     fun accent(value: String) { prefs.edit { putString("accent", value) } }
     fun motion(value: Boolean) { prefs.edit { putBoolean("motion", value) } }
+    private fun favoriteKey(endpoint: String, username: String): String = "favorites:" +
+        java.security.MessageDigest.getInstance("SHA-256").digest((endpoint.trimEnd('/') + "\n" + username).toByteArray())
+            .joinToString("") { "%02x".format(it) }
+    fun favorites(endpoint: String, username: String): Pair<List<Chat>, Set<String>> = try {
+        val raw = WireJson.parseToJsonElement(prefs.getString(favoriteKey(endpoint, username), "{}").orEmpty()).jsonObject
+        raw.array("chats").map { parseChat(it.jsonObject, it.jsonObject["archived"]?.jsonPrimitive?.booleanOrNull == true) }
+            .map { it.copy(status = "notLoaded") } to raw.array("projects").map { it.jsonPrimitive.content }.toSet()
+    } catch (_: Exception) { emptyList<Chat>() to emptySet<String>() }
+    fun favorites(endpoint: String, username: String, chats: List<Chat>, projects: Set<String>) {
+        prefs.edit { putString(favoriteKey(endpoint, username), buildJsonObject {
+            put("chats", JsonArray(chats.map { chat -> buildJsonObject {
+                put("id", chat.id); put("name", chat.title); put("preview", chat.preview); put("cwd", chat.cwd)
+                put("archived", chat.archived); put("isPinned", chat.pinned); put("source", chat.source)
+                chat.parentId?.let { put("parentThreadId", it) }; chat.projectId?.let { put("projectId", it) }; put("updatedAt", chat.updatedAt)
+            } })); put("projects", JsonArray(projects.map(::JsonPrimitive)))
+        }.toString()) }
+    }
     fun chatMode(id: String): String = prefs.getString("mode:$id", "codex").orEmpty()
     fun accessMode(id: String): String = prefs.getString("access:$id", "host").orEmpty()
     fun chatOptions(id: String, mode: String, access: String) { prefs.edit { putString("mode:$id", mode); putString("access:$id", access) } }
