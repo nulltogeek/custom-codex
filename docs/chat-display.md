@@ -1,7 +1,9 @@
 # Conversation display and image previews
 
-Chats show your messages and Codex's final replies. Reasoning, progress messages,
-terminal output and intermediate edits stay out of the conversation. The running
+Chats show your messages, Codex's final replies and collapsed command cards.
+Expand a command to read its output and collapse it again when finished. Commands
+show their running, completed or failed status. Reasoning, progress messages and
+intermediate edits stay out of the conversation. The running
 status and approval/input buttons remain available while work is in progress.
 Older messages without a message phase use the last assistant reply from each
 finished turn.

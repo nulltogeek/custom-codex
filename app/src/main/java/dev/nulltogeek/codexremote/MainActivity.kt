@@ -426,19 +426,19 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
 }
 
-@Composable private fun MessageItem(item: TimelineItem, showDiff: (Change) -> Unit, loadImage: suspend (String) -> ByteArray) {
+@Composable internal fun MessageItem(item: TimelineItem, showDiff: (Change) -> Unit, loadImage: suspend (String) -> ByteArray) {
     var visibleLimit by rememberSaveable(item.id) { mutableIntStateOf(6000) }
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
     val user = item.type == "userMessage"; val tool = item.type !in listOf("userMessage", "agentMessage", "finalChanges", "error")
-    val label = if (user) "YOU" else if (item.type == "finalChanges") "CHANGES" else if (item.type == "error") "ERROR" else if (!tool) "CODEX" else item.type.uppercase()
+    val label = if (user) "YOU" else if (item.type == "finalChanges") "CHANGES" else if (item.type == "error") "ERROR" else if (!tool) "CODEX" else if (item.type == "commandExecution") "COMMAND" else item.type.uppercase()
     Surface(color = if (user) MaterialTheme.colorScheme.surfaceVariant else if (tool) MaterialTheme.colorScheme.surface else Color.Transparent, shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.fillMaxWidth().padding(if (tool || user) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (tool) Surface(onClick = { expanded = !expanded }, color = Color.Transparent) {
+            if (tool) Surface(onClick = { expanded = !expanded }, modifier = Modifier.testTag("command:${item.id}"), color = Color.Transparent) {
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                         Text(item.detail.ifBlank { item.text }.lineSequence().firstOrNull().orEmpty().take(160), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-                        if (item.status.isNotEmpty()) Text(item.status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(commandStatus(item), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (expanded) "Collapse $label" else "Expand $label")
                 }

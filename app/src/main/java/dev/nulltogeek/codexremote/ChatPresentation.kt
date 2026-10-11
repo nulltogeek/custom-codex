@@ -2,7 +2,15 @@ package dev.nulltogeek.codexremote
 
 import kotlinx.serialization.json.*
 
-/** Keep work events in the model for reconciliation, but present only the conversation. */
+internal fun commandStatus(item: TimelineItem): String = when (item.status) {
+    "inProgress", "running" -> "Running"
+    "completed" -> "Completed"
+    "failed" -> "Failed"
+    "declined" -> "Declined"
+    else -> if (item.turnStatus == "inProgress") "Running" else if (item.turnStatus == "interrupted") "Stopped" else "Completed"
+}
+
+/** Show command summaries while keeping reasoning and progress prose hidden. */
 fun conversationTimeline(state: ScreenState): List<TimelineItem> = state.timeline
     .groupBy { it.turnId }
     .flatMap { (turnId, items) ->
@@ -12,7 +20,7 @@ fun conversationTimeline(state: ScreenState): List<TimelineItem> = state.timelin
         val final = items.lastOrNull { it.type == "agentMessage" && it.phase == "final_answer" }
             ?: if (running) null else items.lastOrNull { it.type == "agentMessage" && it.phase.isEmpty() }
         val messages = items.filter { item ->
-            item.type in listOf("userMessage", "error") ||
+            item.type in listOf("userMessage", "error", "commandExecution") ||
                 (item.type == "agentMessage" && (item.id == final?.id ||
                     (turnId.isEmpty() && !running && item.phase.isEmpty())))
         }

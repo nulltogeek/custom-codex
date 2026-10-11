@@ -65,13 +65,15 @@ class RemoteUiTest {
         compose.runOnIdle { state.value = state.value.copy(page = "settings") }
         compose.onNodeWithText("Sign out").performScrollTo().assertIsDisplayed()
     }
-    @Test fun workingDetailsStayHiddenAndFinalDiffIsInspectable() {
+    @Test fun commandOutputStartsCollapsedAndFinalDiffIsInspectable() {
         val state = mutableStateOf(sample().copy(selectedChat = Chat("c", "Android client", "", "/workspace", "active"),
             timeline = listOf(TimelineItem("user", "userMessage", "Build an Android client"), TimelineItem("agent", "agentMessage", "The native interface is ready."),
                 TimelineItem("terminal", "commandExecution", "All checks passed\n".repeat(1000), "./gradlew test", "completed"))))
         render(state); screenshot("dark-conversation")
         compose.onAllNodesWithText("Show more output").assertCountEquals(0)
-        compose.onNodeWithContentDescription("Expand TERMINAL").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Expand COMMAND").assertIsDisplayed().performClick()
+        compose.onNodeWithText("All checks passed", substring = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Collapse COMMAND").performClick()
         compose.onNodeWithText("All checks passed", substring = true).assertDoesNotExist()
         compose.runOnIdle { state.value = state.value.copy(diff = Change("app/MainActivity.kt", (1..1200).joinToString("\n") { "+line $it" })) }
         compose.onNodeWithText("app/MainActivity.kt").assertIsDisplayed()

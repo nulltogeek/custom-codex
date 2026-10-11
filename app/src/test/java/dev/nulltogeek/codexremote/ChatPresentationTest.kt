@@ -14,14 +14,14 @@ class ChatPresentationTest {
         {"id":"f","type":"fileChange","status":"completed","changes":[{"path":"app.kt","diff":"+fixed"}]},
         {"id":"z","type":"agentMessage","phase":"final_answer","text":"Done"}
     ]}]}"""))
-    @Test fun completedTurnShowsOnlyUserFinalAnswerAndOneChangesSummary() {
+    @Test fun completedTurnShowsUserCommandFinalAnswerAndOneChangesSummary() {
         val items = conversationTimeline(ScreenState(timeline = history()))
-        assertEquals(listOf("u", "z", "final-changes:t1"), items.map { it.id })
+        assertEquals(listOf("u", "c", "z", "final-changes:t1"), items.map { it.id })
         assertEquals("app.kt", items.last().changes.single().path)
     }
-    @Test fun activeTurnKeepsReasoningCommentaryCommandsAndChangesHidden() {
+    @Test fun activeTurnShowsCommandsButKeepsReasoningCommentaryAndChangesHidden() {
         val items = conversationTimeline(ScreenState(timeline = history("inProgress"), activeTurnId = "t1"))
-        assertEquals(listOf("u", "z"), items.map { it.id })
+        assertEquals(listOf("u", "c", "z"), items.map { it.id })
         assertFalse(items.any { it.changes.isNotEmpty() })
     }
     @Test fun legacyMessagesWithoutPhaseShowOnlyTheLastAnswerAfterCompletion() {
@@ -38,14 +38,14 @@ class ChatPresentationTest {
         val updated = reduceTimeline(history("inProgress"), "turn/diff/updated", buildJsonObject { put("turnId", "t1"); put("diff", diff) })
         val complete = reduceTimeline(updated, "turn/completed", raw("""{"turn":{"id":"t1","status":"completed"}}"""))
         val items = conversationTimeline(ScreenState(timeline = complete))
-        assertEquals(listOf("u", "z", "final-changes:t1"), items.map { it.id })
+        assertEquals(listOf("u", "c", "z", "final-changes:t1"), items.map { it.id })
         assertEquals(diff, items.last().changes.single().diff)
         assertEquals("app.kt", items.last().changes.single().path)
     }
     @Test fun emptyCumulativeDiffSuppressesChangesThatWereUndone() {
         val updated = reduceTimeline(history(), "turn/diff/updated", raw("""{"turnId":"t1","diff":""}"""))
         val complete = reduceTimeline(updated, "turn/completed", raw("""{"turn":{"id":"t1","status":"completed"}}"""))
-        assertEquals(listOf("u", "z"), conversationTimeline(ScreenState(timeline = complete)).map { it.id })
+        assertEquals(listOf("u", "c", "z"), conversationTimeline(ScreenState(timeline = complete)).map { it.id })
     }
     @Test fun finalDiffSurvivesHistoryReloadAndCachedReopen() {
         val thread = raw("""{"turns":[{"id":"t1","status":"completed","items":[{"id":"a","type":"agentMessage","text":"Done"}]}]}""")
@@ -63,7 +63,7 @@ class ChatPresentationTest {
     @Test fun finalChangesRemainWithTheirOwnTurnAndFailuresRemainVisible() {
         val next = parseTimeline(raw("""{"turns":[{"id":"t2","status":"failed","items":[
             {"id":"u2","type":"userMessage","content":[{"type":"text","text":"Next"}]}],"error":{"message":"Unavailable"}}]}"""))
-        assertEquals(listOf("u", "z", "final-changes:t1", "u2", "turn-error:t2"),
+        assertEquals(listOf("u", "c", "z", "final-changes:t1", "u2", "turn-error:t2"),
             conversationTimeline(ScreenState(timeline = history() + next)).map { it.id })
     }
     @Test fun imageInputsKeepTheirSourceInsteadOfBecomingPlaceholderText() {
