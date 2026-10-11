@@ -208,7 +208,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private fun saveChatOptions() { val state = mutable.value; store.chatOptions(state.selectedChat?.id ?: "new", state.chatMode, state.accessMode) }
     private fun mobileParams(state: ScreenState) = buildJsonObject { put("mobileMode", state.chatMode); put("accessMode", state.accessMode) }
     fun page(value: String) { mutable.update { it.copy(page = value, selectedChat = null, diff = null) } }
-    fun filterProject(id: String?) { mutable.update { it.copy(page = "chats", projectFilter = id, selectedChat = null) } }
+    fun filterProject(id: String?) { mutable.update { it.copy(page = if (id == null && it.page == "archived") "archived" else "chats", projectFilter = id, selectedChat = null) } }
     fun search(value: String) {
         mutable.update { it.copy(searchTerm = value, catalogRevision = it.catalogRevision + 1, catalogError = null, catalogErrorArchived = null, activeCursor = null, archivedCursor = null) }; searchJob?.cancel()
         val revision = mutable.value.catalogRevision

@@ -223,6 +223,8 @@ class RemoteUiTest {
         compose.waitUntil(10000) { calls == 1 }
         compose.onNodeWithText("Message 62").assertIsDisplayed()
         compose.onNodeWithTag("jump-to-latest").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithContentDescription("Jump to latest").assertIsDisplayed()
+        compose.onNodeWithText("Jump to latest").assertDoesNotExist()
         val before = compose.onNodeWithText("Message 62").fetchSemanticsNode().boundsInRoot.top
         compose.runOnIdle { state.value = state.value.copy(timeline = (1..60).map { TimelineItem("m$it", "agentMessage", "Message $it") } + state.value.timeline, olderLoading = false, hiddenOlderCount = 0) }
         compose.onNodeWithText("Message 62").assertIsDisplayed()

@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
+import kotlinx.serialization.json.buildJsonObject
 import android.graphics.Bitmap
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
@@ -65,6 +66,74 @@ class LibraryUiTest {
         screenshot("v0.7.0-chat-favorites")
         compose.onNodeWithContentDescription("Remove chat Saved older chat from favorites").performClick()
         compose.onNodeWithText("No favorite chats yet").assertIsDisplayed()
+    }
+
+    @Test fun archivedSectionFiltersProjectsAndIncludesArchivedAgents() {
+        val archived = Chat("archive", "Archived conversation", "", "/workspace", archived = true)
+        val state = mutableStateOf(ScreenState(connection = "Connected", projectFilter = "p", projects = listOf(Project("p", "Project", listOf("/workspace"))),
+            chats = listOf(archived, archived.copy(id = "agent", title = "Archived agent", source = "subAgent"),
+                archived.copy(id = "other", title = "Other project archive", cwd = "/other"),
+                archived.copy(id = "active", title = "Active conversation", archived = false))))
+        val vm = RemoteViewModel(compose.activity.application)
+        var restore: Chat? = null
+        render { ChatsScreen(state.value, vm, approval = {}, archivedOnly = true, archive = { restore = it }) }
+        compose.onNodeWithText("Archived chats").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Search archived chats").assertIsDisplayed()
+        compose.onNodeWithText("Recent").assertDoesNotExist()
+        compose.onNodeWithText("Archived conversation").assertIsDisplayed()
+        compose.onNodeWithText("Archived agent").assertIsDisplayed()
+        compose.onNodeWithText("Active conversation").assertDoesNotExist()
+        compose.onNodeWithText("Other project archive").assertDoesNotExist()
+        compose.onNodeWithTag("archive-swipe:archive").performTouchInput { swipeRight() }
+        compose.waitUntil(10000) { restore != null }
+        assertEquals(archived, restore)
+        compose.runOnIdle { state.value = state.value.copy(chats = emptyList()) }
+        compose.onNodeWithText("No archived chats").assertIsDisplayed()
+    }
+
+    @Test fun emptyArchivedSectionLoadsArchivedPagesAndRetainsSearch() {
+        val state = mutableStateOf(ScreenState(connection = "Connected", searchTerm = "needle", activeCursor = "active-page",
+            archivedCursor = "archive-page", pending = listOf(PendingInput("pending", "approval", buildJsonObject {})),
+            chats = listOf(Chat("active", "Active needle", "", ""))))
+        val requests = mutableListOf<Boolean>()
+        val vm = RemoteViewModel(compose.activity.application)
+        render { ChatsScreen(state.value, vm, approval = {}, archivedOnly = true, loadMore = { archived ->
+            requests += archived
+            state.value = state.value.copy(archivedCursor = null, chats = state.value.chats +
+                Chat("archived", "Archived needle", "", "", archived = true))
+        }) }
+        compose.waitUntil(10000) { requests == listOf(true) }
+        compose.onNodeWithText("Archived needle").assertIsDisplayed()
+        compose.onNodeWithText("Active needle").assertDoesNotExist()
+        assertEquals("needle", state.value.searchTerm)
+        assertEquals("active-page", state.value.activeCursor)
+        compose.waitForIdle(); assertEquals(listOf(true), requests)
+    }
+
+    @Test fun archivedNavigationReturnsToArchiveAndOffersRestore() {
+        val chat = Chat("archive-nav", "Saved conversation", "", "/workspace", archived = true)
+        val vm = RemoteViewModel(compose.activity.application)
+        vm.filterProject("p")
+        render {
+            val state by vm.state.collectAsState()
+            RemoteApp(state.copy(signedIn = true, connection = "Connected", motion = false, chats = listOf(chat),
+                projects = listOf(Project("p", "Project", listOf("/workspace")))), vm)
+        }
+        compose.onNodeWithTag("nav-archived").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("nav-archived").assertIsSelected()
+        compose.onNodeWithText("Saved conversation").performClick()
+        compose.onNodeWithContentDescription("Restore chat").performClick()
+        compose.onNodeWithText("Restore this chat?").assertIsDisplayed()
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Archived chats").assertIsDisplayed()
+        compose.onNodeWithTag("nav-archived").assertIsSelected()
+        compose.onNodeWithText("Saved conversation").performClick()
+        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        compose.onNodeWithTag("nav-archived").assertIsSelected()
+        compose.onNodeWithContentDescription("All projects").performClick()
+        compose.onNodeWithTag("nav-archived").assertIsSelected()
+        compose.runOnIdle { assertNull(vm.state.value.projectFilter) }
     }
 
     @Test fun projectFavoritesFilterAndToggleAt320Dp() {

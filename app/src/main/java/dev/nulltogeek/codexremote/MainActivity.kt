@@ -114,7 +114,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     var confirmArchive by remember { mutableStateOf<Chat?>(null) }
     val pending = approval?.let { candidate -> state.pending.find { it.id == candidate.id } }
     BackHandler(state.diff != null || state.selectedChat != null) {
-        if (state.diff != null) vm.showDiff(null) else vm.page("chats")
+        if (state.diff != null) vm.showDiff(null) else vm.page(state.page)
     }
     Scaffold(containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -124,7 +124,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     if (state.signedIn) Text(state.host, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }, navigationIcon = {
-                if (state.diff != null || state.selectedChat != null) IconButton(onClick = { if (state.diff != null) vm.showDiff(null) else vm.page("chats") }) {
+                if (state.diff != null || state.selectedChat != null) IconButton(onClick = { if (state.diff != null) vm.showDiff(null) else vm.page(state.page) }) {
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
                 }
             }, actions = {
@@ -139,20 +139,22 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         }, bottomBar = {
             if (state.signedIn && state.selectedChat == null && state.diff == null) Surface(color = MaterialTheme.colorScheme.surface) {
                 Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    listOf(Triple("chats", "Chats", Icons.AutoMirrored.Outlined.Chat), Triple("projects", "Projects", Icons.Outlined.FolderOpen), Triple("settings", "Settings", Icons.Outlined.Settings)).forEach { (page, label, icon) ->
-                        TextButton(onClick = { vm.page(page) }, modifier = Modifier.weight(1f).height(48.dp).semantics { selected = state.page == page },
+                    listOf(Triple("chats", "Chats", Icons.AutoMirrored.Outlined.Chat), Triple("archived", "Archived", Icons.Outlined.Archive), Triple("projects", "Projects", Icons.Outlined.FolderOpen), Triple("settings", "Settings", Icons.Outlined.Settings)).forEach { (page, label, icon) ->
+                        TextButton(onClick = { vm.page(page) }, modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("nav-$page").semantics { selected = state.page == page },
                             colors = ButtonDefaults.textButtonColors(containerColor = if (state.page == page) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
                                 contentColor = if (state.page == page) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant),
                             contentPadding = PaddingValues(horizontal = 6.dp)) {
-                            Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.width(6.dp))
-                            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.height(4.dp))
+                                Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            }
                         }
                     }
                 }
             }
         }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (state.loading && !(state.refreshing && state.selectedChat == null && state.page in listOf("chats", "projects"))) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (state.loading && !(state.refreshing && state.selectedChat == null && state.page in listOf("chats", "archived", "projects"))) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (state.signedIn && state.connection != "Connected") Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.CloudOff, null, Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
@@ -173,6 +175,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 screen.startsWith("chat:") && state.selectedChat != null -> key(state.selectedChat.id) { Conversation(state, vm) { approval = it } }
                 screen == "projects" -> ProjectScreen(state, vm)
                 screen == "settings" -> SettingsScreen(state, vm)
+                screen == "archived" -> ChatsScreen(state, vm, approval = { approval = it }, archive = { confirmArchive = it }, archivedOnly = true)
                 else -> ChatsScreen(state, vm, approval = { approval = it }, archive = { confirmArchive = it })
             } }
         }
@@ -206,8 +209,9 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 }
 
 @Composable internal fun ChatsScreen(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit, loadMore: (Boolean) -> Unit = { vm.loadMore(it) },
-    archive: (Chat) -> Unit = {}, favorite: (Chat) -> Unit = { vm.favorite(it) }, refresh: () -> Unit = { vm.refresh() }) {
-    val query = state.searchTerm; var tab by rememberSaveable { mutableIntStateOf(0) }
+    archive: (Chat) -> Unit = {}, favorite: (Chat) -> Unit = { vm.favorite(it) }, refresh: () -> Unit = { vm.refresh() }, archivedOnly: Boolean = false) {
+    val query = state.searchTerm; var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val tab = if (archivedOnly) 1 else selectedTab
     val project = state.projects.find { it.id == state.projectFilter }
     val list = remember(state.chats, state.favoriteChats, query, tab, state.projectFilter, state.assignments, state.projects) {
         val favorites = state.favoriteChats.map { it.id }.toSet()
@@ -222,7 +226,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     val listState = key(tab, query, state.projectFilter) { rememberLazyListState() }
     val page = nextCatalogPage(state, tab)
     val error = page?.let { catalogPageError(state, it.archived) }
-    val expectedItems = 3 + (if (state.pending.isEmpty()) 0 else 1) + maxOf(1, list.size) + (if (page == null) 0 else 1)
+    val expectedItems = (if (archivedOnly) 2 else 3) + (if (state.pending.isEmpty()) 0 else 1) + maxOf(1, list.size) + (if (page == null) 0 else 1)
     val latestLoadMore by rememberUpdatedState(loadMore)
     LaunchedEffect(page, listState, expectedItems, error, state.connection, state.catalogLoading, state.refreshing) {
         if (page != null && error == null && !state.catalogLoading && !state.refreshing && state.connection == "Connected")
@@ -234,14 +238,14 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(project?.name ?: "Your workspace", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (archivedOnly) "Archived chats" else project?.name ?: "Your workspace", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             StatusDot(state.connection == "Connected"); Spacer(Modifier.width(6.dp))
-                            Text("${state.projects.size} projects · ${state.chats.size} loaded chats", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (archivedOnly) "${state.chats.count { it.archived }} loaded archived chats" + (project?.let { " · ${it.name}" } ?: "") else "${state.projects.size} projects · ${state.chats.size} loaded chats", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     if (project != null) IconButton(onClick = { vm.filterProject(null) }) { Icon(Icons.Outlined.Close, "All projects") }
-                    FilledTonalIconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat") }
+                    if (!archivedOnly) FilledTonalIconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat") }
                 }
             }
             if (state.pending.isNotEmpty()) item {
@@ -252,9 +256,9 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     }
                 }
             }
-            item { CompactSearch(query, vm::search) }
-            item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(0 to "Recent", 3 to "Favorites", 1 to "Archived", 2 to "Agent chats").forEach { (i, label) -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(label) }) } } }
-            if (list.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (tab == 3) "No favorite chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (tab == 3) "Tap a chat's star to keep it here." else "Choose a project or start a conversation.") }
+            item { CompactSearch(query, vm::search, if (archivedOnly) "Search archived chats" else "Search all chats") }
+            if (!archivedOnly) item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(0 to "Recent", 3 to "Favorites", 2 to "Agent chats").forEach { (i, label) -> FilterChip(selected = tab == i, onClick = { selectedTab = i }, label = { Text(label) }) } } }
+            if (list.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (archivedOnly) "No archived chats" else if (tab == 3) "No favorite chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (archivedOnly) "Chats you archive appear here. Open one to read or restore it." else if (tab == 3) "Tap a chat's star to keep it here." else "Choose a project or start a conversation.") }
             items(list, key = { it.id }, contentType = { "chat" }) { chat ->
                 val p = state.projects.find { it.id == (state.assignments[chat.id] ?: chat.projectId) } ?: state.projects.find { chat.cwd in it.roots }
                 SwipeArchiveRow(chat, canArchive(state, chat), archive = { archive(chat) }) {
@@ -268,15 +272,15 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
 }
 
-@Composable private fun CompactSearch(query: String, onQuery: (String) -> Unit) {
+@Composable private fun CompactSearch(query: String, onQuery: (String) -> Unit, label: String = "Search all chats") {
     Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), shape = RoundedCornerShape(14.dp)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Search, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.width(8.dp))
-            BasicTextField(query, onQuery, modifier = Modifier.weight(1f).padding(vertical = 12.dp).semantics { contentDescription = "Search all chats" },
+            BasicTextField(query, onQuery, modifier = Modifier.weight(1f).padding(vertical = 12.dp).semantics { contentDescription = label },
                 singleLine = true, textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), decorationBox = { input ->
-                    Box { if (query.isEmpty()) Text("Search all chats", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant); input() }
+                    Box { if (query.isEmpty()) Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant); input() }
                 })
             if (query.isNotEmpty()) IconButton(onClick = { onQuery("") }) { Icon(Icons.Outlined.Close, "Clear search", Modifier.size(18.dp)) }
             else Spacer(Modifier.width(12.dp))
@@ -404,15 +408,13 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 PageLoader(state.olderLoading, state.olderError, "Earlier messages load as you scroll", state.hiddenOlderCount > 0 || state.connection == "Connected") { loadOlder() }
             }
         }
-        if (!followTail) FilledTonalButton(
+        if (!followTail) FilledTonalIconButton(
             onClick = { scope.launch {
                 if (state.motion) listState.animateScrollToItem(0) else listState.scrollToItem(0)
             } },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp).testTag("jump-to-latest")
+            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp).size(48.dp).testTag("jump-to-latest")
         ) {
-            Icon(Icons.Outlined.ArrowDownward, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Jump to latest")
+            Icon(Icons.Outlined.ArrowDownward, contentDescription = "Jump to latest", modifier = Modifier.size(24.dp))
         }
     }
 }

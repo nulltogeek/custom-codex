@@ -1,0 +1,3 @@
+The jump-to-latest button now shows only a down arrow, with an accessible label.
+Archived chats have their own section in bottom navigation, with search, project filtering and older-history loading.
+Open an archived chat to read or restore it. Back returns you to the Archived section.
