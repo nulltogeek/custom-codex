@@ -75,6 +75,25 @@ class RpcClientTest {
         }
     }
 
+    @Test fun pickerUploadUsesHttpSessionAfterBackgroundClosesTheChatSocket() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setResponseCode(201).setBody("""{"id":"image","name":"photo.jpg","size":150000,"mimeType":"image/jpeg","input":{"type":"localImage","path":"/uploaded/photo.jpg"}}"""))
+            val rpc = RpcClient(); rpc.configure("http://127.0.0.1:${server.port}", "s".repeat(43))
+            rpc.close()
+            assertEquals("Offline", rpc.status.value)
+            val bytes = ByteArray(150000) { 42 }; val progress = mutableListOf<Int>()
+            val uploaded = rpc.upload("photo.jpg", "image/jpeg", bytes) { progress += it }
+            assertTrue(uploaded.readyToSend); assertEquals("localImage", uploaded.input.text("type"))
+            assertEquals(0, progress.first()); assertEquals(100, progress.last())
+            assertTrue(progress.any { it in 1..99 }); assertEquals(progress.sorted(), progress)
+            val request = server.takeRequest()
+            assertEquals("Bearer " + "s".repeat(43), request.getHeader("Authorization"))
+            assertEquals(bytes.size.toString(), request.getHeader("Content-Length"))
+            assertArrayEquals(bytes, request.body.readByteArray())
+        }
+    }
+
     @Test fun usernamePasswordLoginUsesJsonAndSessionForLaterRequests() = runBlocking {
         MockWebServer().use { server ->
             server.start()

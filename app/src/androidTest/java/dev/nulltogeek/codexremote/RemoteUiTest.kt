@@ -177,16 +177,37 @@ class RemoteUiTest {
         val bitmap = Bitmap.createBitmap(40, 40, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.MAGENTA) }
         image.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 80, it) }; bitmap.recycle()
         val state = mutableStateOf(sample().copy(selectedChat = Chat("preview", "Image draft", "", "/workspace", "idle"), uploading = true,
-            attachments = listOf(Attachment("a", "photo.jpg", 100, "image/jpeg", buildJsonObject {}, image.absolutePath, uploading = true),
-                Attachment("b", "notes.txt", 100, "text/plain", buildJsonObject {}))))
+            attachments = listOf(Attachment("a", "photo.jpg", 100, "image/jpeg", jsonObject("type" to "localImage", "path" to "/uploaded/photo.jpg"), image.absolutePath, uploading = true, uploadProgress = 45),
+                Attachment("b", "notes.txt", 100, "text/plain", jsonObject("type" to "text", "text" to "attached notes")))))
         render(state, narrow = true)
         compose.waitUntil(10000) { compose.onAllNodesWithContentDescription("Preview of photo.jpg").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithContentDescription("Preview of photo.jpg").assertIsDisplayed()
         compose.onNodeWithContentDescription("Cancel upload photo.jpg").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("Uploading 45%").assertIsDisplayed()
         compose.onNodeWithContentDescription("Send").assertIsNotEnabled()
         screenshot("attachment-preview-upload")
         compose.runOnIdle { state.value = state.value.copy(uploading = false, attachments = state.value.attachments.map { it.copy(uploading = false) }) }
+        compose.onNodeWithText("2 uploaded · Ready to send").assertIsDisplayed()
         compose.onNodeWithContentDescription("Remove photo.jpg").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithContentDescription("Send").assertIsEnabled()
+    }
+
+    @Test fun failedAttachmentKeepsItsPreviewAndBlocksSendUntilRemoved() {
+        val image = File(compose.activity.cacheDir, "failed-upload-fixture.jpg")
+        val bitmap = Bitmap.createBitmap(40, 40, Bitmap.Config.ARGB_8888)
+        image.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 80, it) }; bitmap.recycle()
+        val file = Attachment("failed", "photo.jpg", 100, "image/jpeg", buildJsonObject {}, image.absolutePath,
+            uploadProgress = 60, uploadError = "Network timed out")
+        val state = mutableStateOf(sample().copy(selectedChat = Chat("failed-upload", "Draft", "", "/workspace"), draft = "Look at this image", attachments = listOf(file)))
+        render(state, narrow = true)
+        compose.onNodeWithTag("attachment-strip").assertIsDisplayed()
+        compose.onNodeWithText("Upload failed").assertIsDisplayed()
+        compose.onNodeWithText("Network timed out").assertIsDisplayed()
+        compose.waitUntil(10000) { compose.onAllNodesWithContentDescription("Preview of photo.jpg").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Preview of photo.jpg").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Remove photo.jpg").assertIsEnabled()
+        compose.onNodeWithContentDescription("Send").assertIsNotEnabled()
+        compose.runOnIdle { state.value = state.value.copy(attachments = emptyList()) }
         compose.onNodeWithContentDescription("Send").assertIsEnabled()
     }
 

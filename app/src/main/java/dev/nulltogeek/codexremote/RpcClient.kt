@@ -90,9 +90,22 @@ class RpcClient {
             WireJson.parseToJsonElement(it.body?.string() ?: "{}").jsonObject
         }
     }
-    suspend fun upload(name: String, mimeType: String, bytes: ByteArray): Attachment = withContext(Dispatchers.IO) {
+    suspend fun upload(name: String, mimeType: String, bytes: ByteArray, progress: (Int) -> Unit = {}): Attachment = withContext(Dispatchers.IO) {
         require(bytes.isNotEmpty() && bytes.size <= 20 * 1024 * 1024) { "Select a non-empty file up to 20 MB" }
-        val body = bytes.toRequestBody(mimeType.toMediaType())
+        val body = object : RequestBody() {
+            override fun contentType() = mimeType.toMediaType()
+            override fun contentLength() = bytes.size.toLong()
+            override fun writeTo(sink: okio.BufferedSink) {
+                var offset = 0; var lastPercent = -1
+                progress(0)
+                while (offset < bytes.size) {
+                    val count = minOf(64 * 1024, bytes.size - offset)
+                    sink.write(bytes, offset, count); offset += count
+                    val percent = (100L * offset / bytes.size).toInt()
+                    if (percent != lastPercent) { progress(percent); lastPercent = percent }
+                }
+            }
+        }
         val call = http.newBuilder().writeTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
             .newCall(Request.Builder().url(endpoint + "/v1/attachments").header("Authorization", "Bearer $token")
                 .header("X-File-Name", URLEncoder.encode(name, "UTF-8").replace("+", "%20")).post(body).build())

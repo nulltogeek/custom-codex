@@ -27,13 +27,14 @@ import androidx.compose.ui.unit.dp
     Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
         Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 8.dp, vertical = 4.dp).testTag("chat-composer"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             ComposerOptions(state, vm)
-            if (state.attachments.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(state.attachments, key = { it.id }) { file ->
-                    AttachmentTile(file, !state.sending) { vm.removeAttachment(file.id) }
+            if (state.attachments.isNotEmpty()) {
+                Text(attachmentSummary(state.attachments), style = MaterialTheme.typography.labelSmall,
+                    color = if (state.attachments.any { it.uploadError.isNotEmpty() }) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                LazyRow(Modifier.fillMaxWidth().heightIn(min = 88.dp).testTag("attachment-strip"), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(state.attachments, key = { it.id }) { file ->
+                        AttachmentTile(file, !state.sending) { vm.removeAttachment(file.id) }
+                    }
                 }
-            }
-            if (state.uploading) Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)); Text("Uploading attachment…", style = MaterialTheme.typography.labelSmall)
             }
             if (state.uncertainSend) TextButton(onClick = { vm.refresh() }) { Text("Refresh and check delivery") }
             Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), shape = RoundedCornerShape(18.dp)) {
@@ -56,7 +57,7 @@ import androidx.compose.ui.unit.dp
                         })
                     Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                         FilledIconButton(onClick = { vm.send() },
-                            enabled = (state.draft.isNotBlank() || state.attachments.isNotEmpty()) && canAttach && !state.uncertainSend,
+                            enabled = (state.draft.isNotBlank() || state.attachments.isNotEmpty()) && state.attachments.all { it.readyToSend } && canAttach && !state.uncertainSend,
                             modifier = Modifier.size(40.dp)) {
                             if (state.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.AutoMirrored.Outlined.Send, "Send", Modifier.size(20.dp))
                         }
@@ -74,14 +75,23 @@ import androidx.compose.ui.unit.dp
         }
     }
     Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-        Row(Modifier.width(204.dp).height(64.dp).padding(start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.width(256.dp).height(88.dp).padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             val preview = bitmap
-            if (preview != null) androidx.compose.foundation.Image(preview.asImageBitmap(), "Preview of ${file.name}", Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+            if (preview != null) androidx.compose.foundation.Image(preview.asImageBitmap(), "Preview of ${file.name}", Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
             else Icon(if (file.mimeType.startsWith("image/")) Icons.Outlined.Image else Icons.Outlined.InsertDriveFile, null, Modifier.size(40.dp))
             Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
                 Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
-                Text(if (file.uploading) "Uploading…" else "Ready", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (file.uploading) CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
+                    else Icon(if (file.readyToSend) Icons.Outlined.CheckCircle else Icons.Outlined.ErrorOutline,
+                        null, Modifier.size(14.dp), tint = if (file.readyToSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                    Text(attachmentStatus(file), style = MaterialTheme.typography.labelSmall,
+                        color = if (file.uploadError.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (file.uploadError.isNotEmpty()) Text(file.uploadError, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                else if (file.uploading && file.uploadProgress in 0..100) LinearProgressIndicator(progress = { file.uploadProgress / 100f }, Modifier.fillMaxWidth().padding(top = 4.dp))
             }
             IconButton(onClick = remove, enabled = removable) { Icon(Icons.Outlined.Close, if (file.uploading) "Cancel upload ${file.name}" else "Remove ${file.name}", Modifier.size(18.dp)) }
         }

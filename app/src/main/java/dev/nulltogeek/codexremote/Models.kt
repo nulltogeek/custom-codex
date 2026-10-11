@@ -28,9 +28,11 @@ data class TimelineItem(val id: String, val type: String, val text: String, val 
 data class Change(val path: String, val diff: String)
 data class PendingInput(val id: String, val method: String, val params: JsonObject)
 data class ModelChoice(val id: String, val name: String, val efforts: List<String>, val defaultEffort: String)
-data class Attachment(val id: String, val name: String, val size: Long, val mimeType: String, val input: JsonObject, val previewPath: String = "", val uploading: Boolean = false)
-fun parseAttachment(raw: JsonObject) = Attachment(raw.text("id"), raw.text("name"), raw["size"]?.jsonPrimitive?.longOrNull ?: 0, raw.text("mimeType"), raw.obj("input"), raw.text("previewPath"))
-fun Attachment.toJson() = buildJsonObject { put("id", id); put("name", name); put("size", size); put("mimeType", mimeType); put("input", input); put("previewPath", previewPath) }
+data class Attachment(val id: String, val name: String, val size: Long, val mimeType: String, val input: JsonObject, val previewPath: String = "", val uploading: Boolean = false,
+    val uploadProgress: Int = -1, val uploadError: String = "")
+fun parseAttachment(raw: JsonObject) = Attachment(raw.text("id"), raw.text("name"), raw["size"]?.jsonPrimitive?.longOrNull ?: 0, raw.text("mimeType"), raw.obj("input"), raw.text("previewPath"),
+    uploadProgress = raw["uploadProgress"]?.jsonPrimitive?.intOrNull ?: -1, uploadError = raw.text("uploadError"))
+fun Attachment.toJson() = buildJsonObject { put("id", id); put("name", name); put("size", size); put("mimeType", mimeType); put("input", input); put("previewPath", previewPath); put("uploadProgress", uploadProgress); put("uploadError", uploadError) }
 data class ScreenState(
     val endpoint: String = "", val username: String = "", val signedIn: Boolean = false, val connection: String = "Offline",
     val host: String = "Your computer", val projects: List<Project> = emptyList(),

@@ -371,7 +371,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun send() {
         val state = mutable.value; val chat = state.selectedChat ?: return
-        if ((state.draft.isBlank() && state.attachments.isEmpty()) || state.uploading || state.sending || state.uncertainSend || state.connection != "Connected" || chat.archived) return
+        if ((state.draft.isBlank() && state.attachments.isEmpty()) || state.attachments.any { !it.readyToSend } || state.uploading || state.sending || state.uncertainSend || state.connection != "Connected" || chat.archived) return
         val text = state.draft
         mutable.update { it.copy(sending = true, notice = null, writerConflict = false) }
         viewModelScope.launch(Dispatchers.IO) {
@@ -451,7 +451,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
     fun attach(uris: List<Uri>) {
         val initial = mutable.value; val chatId = initial.selectedChat?.id ?: return
-        if (initial.sending || initial.connection != "Connected") return
+        if (!canAcceptPickedAttachments(initial)) return
         if (initial.attachments.size + uris.size > 8) { mutable.update { it.copy(notice = "Attach up to 8 files per message") }; return }
         for (uri in uris) {
             val id = java.util.UUID.randomUUID().toString()
@@ -489,8 +489,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         mime = "image/jpeg"; name = name.substringBeforeLast('.', name) + ".jpg"
                     }
                     ensureActive()
-                    mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(attachments = it.attachments.map { a -> if (a.id == id) a.copy(name = name, size = bytes.size.toLong(), mimeType = mime, previewPath = previewPath) else a }) }
-                    val attachment = rpc.upload(name, mime, bytes).copy(previewPath = previewPath)
+                    mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(attachments = it.attachments.map { a -> if (a.id == id) a.copy(name = name, size = bytes.size.toLong(), mimeType = mime, previewPath = previewPath, uploadProgress = 0) else a }) }
+                    val attachment = rpc.upload(name, mime, bytes) { percent ->
+                        mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(attachments = it.attachments.map { a -> if (a.id == id) a.copy(uploadProgress = percent) else a }) }
+                    }.copy(previewPath = previewPath, uploadProgress = 100)
                     ensureActive()
                     synchronized(uploadJobs) {
                         // Cancel/remove wins even if the server accepted the bytes just before cancellation.
@@ -502,8 +504,15 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
-                    else mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(notice = e.message ?: "Attachment upload failed") }
-                    mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(attachments = it.attachments.filter { a -> a.id != id }) }
+                    else synchronized(uploadJobs) {
+                        if (uploadJobs.containsKey(id)) {
+                            val message = e.message ?: "Attachment upload failed"
+                            mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(notice = message,
+                                attachments = it.attachments.map { a -> if (a.id == id) a.copy(uploading = false, uploadError = message) else a }) }
+                            if (mutable.value.selectedChat?.id == chatId)
+                                store.attachments(chatId, mutable.value.attachments.filter { !it.uploading })
+                        }
+                    }
                 } finally {
                     uploadJobs.remove(id)
                     mutable.update { it.copy(uploading = it.attachments.any { a -> a.uploading }) }

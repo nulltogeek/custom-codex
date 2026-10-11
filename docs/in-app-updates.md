@@ -1,6 +1,6 @@
 # In-app APK updates
 
-APK 0.4.0 introduced in-app updates; 0.4.1 extended the download deadline for slow VPN links. Version 0.5.0 adds [compact chat, project and composer layouts](mobile-0.5.0.md). Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing updater users can install 0.7.1 from **Settings → App updates**.
+APK 0.4.0 introduced in-app updates; 0.4.1 extended the download deadline for slow VPN links. Version 0.5.0 adds [compact chat, project and composer layouts](mobile-0.5.0.md). Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing updater users can install 0.7.2 from **Settings → App updates**.
 
 ## On the phone
 
@@ -25,7 +25,7 @@ The build script runs Android tests/lint, builds debug/release APKs, copies the 
 To publish already-built APKs:
 
 ```bash
-node scripts/publish-app-update.mjs docs/release-notes/0.7.1.txt
+node scripts/publish-app-update.mjs docs/release-notes/0.7.2.txt
 ```
 
 Publishing verifies both APK signatures and actual package/version/minimum-SDK metadata using Android build-tools. It writes immutable APKs named by their SHA-256 and replaces each channel's manifest atomically. Future APK publications need no backend restart. The first updater deployment restarts the idle service to add these routes; that restart invalidates existing app login sessions.
@@ -99,3 +99,10 @@ of saved history and the unsent draft, including attachment previews and chat
 settings. Copying defers inherited goal work and never sends the draft
 automatically. See [the recovery guide](mobile-0.7.1.md) and
 [release verification](mobile-0.7.1-verification.md).
+
+## 0.7.2 picker and attachment feedback
+
+Version 0.7.2/code 10 fixes dropped file-picker results during chat reconnection
+and displays image previews, upload progress, confirmed Uploaded state and
+persistent failure tiles. See [the feature guide](mobile-0.7.2.md) and
+[release verification](mobile-0.7.2-verification.md). No backend restart is needed.

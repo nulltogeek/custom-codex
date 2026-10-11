@@ -1,0 +1,1 @@
+Fix files and images disappearing when Android's picker returns before the chat reconnects. Attachment tiles show image previews, upload percentage and an explicit Uploaded check mark. Failed uploads retain their preview and error; use X to remove and choose the file again. Send is enabled only after all remaining attachments are uploaded.
