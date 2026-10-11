@@ -219,10 +219,12 @@ class RemoteUiTest {
             RemoteTheme("dark", motion = false) { ChatTimeline(state.value, Modifier.fillMaxHeight(), loadOlder = { calls++; state.value = state.value.copy(olderLoading = true) }, showDiff = {}, approval = {}) }
         } }
         compose.onNodeWithText("Message 100").assertIsDisplayed()
+        compose.onNodeWithTag("jump-to-latest").assertDoesNotExist()
         assertEquals(0, calls)
         compose.onNodeWithTag("history-list").performScrollToIndex(38)
         compose.waitUntil(10000) { calls == 1 }
         compose.onNodeWithText("Message 62").assertIsDisplayed()
+        compose.onNodeWithTag("jump-to-latest").assertIsDisplayed().assertHasClickAction()
         val before = compose.onNodeWithText("Message 62").fetchSemanticsNode().boundsInRoot.top
         compose.runOnIdle { state.value = state.value.copy(timeline = (1..60).map { TimelineItem("m$it", "agentMessage", "Message $it") } + state.value.timeline, olderLoading = false, hiddenOlderCount = 0) }
         compose.onNodeWithText("Message 62").assertIsDisplayed()
@@ -232,6 +234,13 @@ class RemoteUiTest {
         compose.runOnIdle { state.value = state.value.copy(timeline = state.value.timeline.dropLast(1) + state.value.timeline.last().copy(text = "Message 100 streaming")) }
         compose.onNodeWithText("Message 62").assertIsDisplayed()
         screenshot("history-scroll-anchor")
+        compose.onNodeWithTag("jump-to-latest").performClick()
+        compose.onNodeWithText("Message 100 streaming").assertIsDisplayed()
+        compose.onNodeWithTag("jump-to-latest").assertDoesNotExist()
+        // Returning to the bottom resumes following new messages.
+        compose.runOnIdle { state.value = state.value.copy(timeline = state.value.timeline + TimelineItem("m101", "agentMessage", "Message 101")) }
+        compose.onNodeWithText("Message 101").assertIsDisplayed()
+        compose.onNodeWithTag("jump-to-latest").assertDoesNotExist()
     }
 
     @Test fun cataloguePrefetchesAtTheEndAndErrorsWaitForRetry() {

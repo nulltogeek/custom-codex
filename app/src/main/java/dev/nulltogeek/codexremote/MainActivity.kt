@@ -50,6 +50,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.serialization.json.*
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -379,9 +380,9 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 
 @Composable internal fun ChatTimeline(state: ScreenState, modifier: Modifier = Modifier, loadOlder: () -> Unit, showDiff: (Change) -> Unit, approval: (PendingInput) -> Unit) {
     val listState = remember(state.selectedChat?.id) { LazyListState() }
-    var followTail by remember(state.selectedChat?.id) { mutableStateOf(true) }
+    val followTail by remember(listState) { derivedStateOf { !listState.canScrollBackward } }
+    val scope = rememberCoroutineScope()
     val hasOlder = state.olderCursor != null || state.hiddenOlderCount > 0
-    LaunchedEffect(listState) { snapshotFlow { listState.canScrollBackward }.collect { canScroll -> followTail = !canScroll } }
     val last = state.timeline.lastOrNull()
     LaunchedEffect(last?.id, last?.text?.length) { if (followTail && state.timeline.isNotEmpty()) listState.scrollToItem(0) }
     LaunchedEffect(listState, state.olderCursor, state.hiddenOlderCount, state.olderError, state.olderLoading, state.connection) {
@@ -389,17 +390,28 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             snapshotFlow { listState.layoutInfo.totalItemsCount > 0 && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= listState.layoutInfo.totalItemsCount - 3 }
                 .collect { nearStart -> if (nearStart) loadOlder() }
     }
-    LazyColumn(modifier.fillMaxWidth().testTag("history-list"), state = listState, reverseLayout = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(state.pending.filter { it.params.text("threadId") == state.selectedChat?.id }, key = { "pending-${it.id}" }) { request ->
-            Button(onClick = { approval(request) }, Modifier.fillMaxWidth()) { Text(if (request.method.contains("Approval")) "Review requested action" else "Answer Codex") }
+    Box(modifier.fillMaxWidth()) {
+        LazyColumn(Modifier.fillMaxSize().testTag("history-list"), state = listState, reverseLayout = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(state.pending.filter { it.params.text("threadId") == state.selectedChat?.id }, key = { "pending-${it.id}" }) { request ->
+                Button(onClick = { approval(request) }, Modifier.fillMaxWidth()) { Text(if (request.method.contains("Approval")) "Review requested action" else "Answer Codex") }
+            }
+            items(state.timeline.asReversed(), key = { it.id }, contentType = { it.type }) { item -> MessageItem(item, showDiff) }
+            if (state.timeline.isEmpty() && !state.historyAvailable && state.selectedChat?.preview?.isNotBlank() == true) item { EmptyState("Earlier messages unavailable", "New messages will appear here. You can continue this conversation.") }
+            else if (state.timeline.isEmpty()) item { EmptyState(if (state.chatMode == "chat") "A new conversation" else "Ready to build", if (state.chatMode == "chat") "Ask a question, share an image, or discuss an idea." else "Describe the work, attach a file, and choose how Codex can access your computer.") }
+            if (hasOlder) item(key = "history-footer") {
+                PageLoader(state.olderLoading, state.olderError, "Earlier messages load as you scroll", state.hiddenOlderCount > 0 || state.connection == "Connected") { loadOlder() }
+            }
         }
-        items(state.timeline.asReversed(), key = { it.id }, contentType = { it.type }) { item -> MessageItem(item, showDiff) }
-        if (state.timeline.isEmpty() && !state.historyAvailable && state.selectedChat?.preview?.isNotBlank() == true) item { EmptyState("Earlier messages unavailable", "New messages will appear here. You can continue this conversation.") }
-        else if (state.timeline.isEmpty()) item { EmptyState(if (state.chatMode == "chat") "A new conversation" else "Ready to build", if (state.chatMode == "chat") "Ask a question, share an image, or discuss an idea." else "Describe the work, attach a file, and choose how Codex can access your computer.") }
-        if (hasOlder) item(key = "history-footer") {
-            PageLoader(state.olderLoading, state.olderError, "Earlier messages load as you scroll", state.hiddenOlderCount > 0 || state.connection == "Connected") { loadOlder() }
+        if (!followTail) FilledTonalButton(
+            onClick = { scope.launch {
+                if (state.motion) listState.animateScrollToItem(0) else listState.scrollToItem(0)
+            } },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp).testTag("jump-to-latest")
+        ) {
+            Icon(Icons.Outlined.ArrowDownward, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Jump to latest")
         }
-
     }
 }
 
