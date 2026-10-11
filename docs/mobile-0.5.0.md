@@ -1,0 +1,25 @@
+# Compact mobile layout 0.5.0
+
+The chat and project screens use compact rows with tinted icons, tighter spacing and smaller headers. Chat titles and previews use one line each; opening a chat shows its full conversation. Project rows show the first folder path, chat count and number of folders. Tap the folder icon to inspect and copy all full paths. The bottom navigation places icons beside their labels instead of stacking them.
+
+The message composer has one toolbar for coding/conversation mode, model and access. Tap the model to select it. Tap the access control (for example **Host policy**, **Ask** or **Full access**) to open **Chat settings**, where full permission descriptions and reasoning effort are available. Conversation mode still uses read-only access; access and mode changes remain disabled during active turns. Model names truncate on narrow screens; their full labels appear in the dropdown and accessibility description.
+
+The rounded message box contains attachment and send buttons. It starts at one line and expands to five visible lines; longer drafts scroll inside it. Attachment chips and upload progress appear only when needed. Existing draft persistence, send uncertainty handling, file/image selection and approval behavior are retained. Controls keep 48 dp touch targets even where the visible icon is smaller.
+
+## Install or update
+
+Version 0.5.0 uses version code 6 and the same signing identity as 0.4.1. Existing updater users can install it through **Settings → App updates** after connecting WireGuard and signing in. For a first installation, use `artifacts/codex-remote-release.apk`. Previous delivery files are preserved in `artifacts/v0.4.1/`. APKs and raw build/test evidence remain local files excluded from Git.
+
+Only the Android app changes for this release. Publishing the new APK and channel manifests requires no backend or Nginx restart. See [in-app updates](in-app-updates.md) for publication and verification commands.
+
+## Verification
+
+- `./gradlew --offline --no-daemon -PcodexGoogleCdn=true :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:assembleDebugAndroidTest` passed: all 36 JVM tests, clean lint, and debug/release/instrumentation compilation. Evidence: `artifacts/v0.5.0-android-build.txt`. The final screenshot/keyboard test revision also passed instrumentation compilation and lint (`artifacts/v0.5.0-layout-test-build.txt`).
+- Five focused Android 11 instrumentation checks passed in 155.787 seconds: dark/light chat and project screens, long conversations/diffs, code blocks and attachments, compact composer controls at 320 dp, and access to all project folders with 1.3× text. Evidence: `artifacts/v0.5.0-android-instrumentation.txt`.
+- A separate narrow-composer rerun passed in 51.68 seconds after adding an explicit Android IME visibility assertion and full-screen captures. Mode/model/access and send controls remained visible above the keyboard; access descriptions and reasoning levels were reachable in the settings panel. Evidence: `artifacts/v0.5.0-keyboard-instrumentation.txt` and `artifacts/screenshots/v0.5.0/compact-keyboard.png` / `compact-chat-settings.png`.
+- At 320 dp width, the tagged composer measured 99.81 dp empty and 182.10 dp for a 12-line draft, excluding its 8 dp outer vertical padding: approximately **108 dp** and **190 dp** total. The draft stays bounded and the send control remains visible. Metrics: `artifacts/v0.5.0-layout-metrics.json`. Captures in `artifacts/screenshots/v0.5.0/` were visually reviewed.
+- Both APK signatures verified and matched their corresponding 0.4.1 signing identities. Publication checked actual package IDs, version code 6 and minimum Android SDK 30. The release APK is 2,742,222 bytes; debug is 60,486,055 bytes. Evidence: `artifacts/v0.5.0-signing-verification.json`.
+- `adb -s emulator-5554 install -r artifacts/codex-remote-release.apk` succeeded over the installed release package (`artifacts/v0.5.0-release-install.txt`). Interactive installation through the updater on the physical phone remains unverified; the existing installer flow was previously exercised through its confirmation screen.
+- `node scripts/verify-app-update.mjs https://codex.geeksun.ir --local` passed for both 0.5.0 channels: full authenticated downloads, exact byte counts and SHA-256, matching published metadata, and rejection of unauthorized/browser-Origin requests (`artifacts/v0.5.0-update-proxy.json`). `sha256sum -c artifacts/SHA256SUMS` also passed for both delivery files.
+
+The software emulator recovered from an Android network-stack startup crash before these tests. Its viewport was set to 540×960 at density 210; the size override was reset afterward. ADB root was temporarily enabled only on the emulator to retrieve test captures and then restored to non-root. The emulator was closed after verification. No backend restart was needed. These checks do not establish hardware performance. Physical-phone appearance, device-specific keyboard/file-picker behavior and completed phone installation require separate verification.

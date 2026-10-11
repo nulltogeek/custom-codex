@@ -6,10 +6,17 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.view.FrameMetrics
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
@@ -26,18 +33,27 @@ class RemoteUiTest {
     private fun sample() = ScreenState(signedIn = true, username = "owner", connection = "Connected", host = "Linux workstation", theme = "dark",
         projects = (1..15).map { Project("p$it", "Project $it", listOf("/workspace/project-$it")) },
         chats = (1..100).map { Chat("c$it", "Build feature $it", "Review code and verify the Android changes", "/workspace/project-1", if (it == 1) "active" else "idle") })
-    private fun render(state: androidx.compose.runtime.MutableState<ScreenState>) {
+    private fun render(state: androidx.compose.runtime.MutableState<ScreenState>, narrow: Boolean = false, fontScale: Float? = null) {
         compose.activityRule.scenario.onActivity { activity ->
             val vm = RemoteViewModel(activity.application)
-            activity.setContent { RemoteTheme(state.value.theme, state.value.accent, motion = false) { RemoteApp(state.value, vm) } }
+            activity.setContent {
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale ?: density.fontScale)) {
+                    Box(if (narrow) Modifier.width(320.dp).fillMaxHeight() else Modifier) {
+                        RemoteTheme(state.value.theme, state.value.accent, motion = false) { RemoteApp(state.value, vm) }
+                    }
+                }
+            }
         }
         compose.waitForIdle()
     }
     private fun screenshot(name: String) {
         val dir = compose.activity.getExternalFilesDir(null)!!
+        val capture = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
         File(dir, "$name.png").outputStream().use {
-            compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
+            capture.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
+        capture.recycle()
     }
     @Test fun darkAndLightScreensAndProjects() {
         val state = mutableStateOf(sample()); render(state)
@@ -89,6 +105,60 @@ class RemoteUiTest {
         compose.runOnIdle { state.value = state.value.copy(updateDownloading = false, updateApk = "/fixture.apk") }
         compose.onNodeWithText("Install update").assertIsDisplayed()
         screenshot("app-update-settings")
+    }
+    @Test fun compactComposerKeepsControlsReachableOnNarrowScreens() {
+        val state = mutableStateOf(sample().copy(selectedChat = Chat("compact", "Compact conversation", "", "/workspace", "idle"),
+            selectedModel = "gpt", selectedEffort = "high", models = listOf(ModelChoice("gpt", "gpt-6.1-sol", listOf("low", "high"), "high")),
+            timeline = listOf(TimelineItem("a", "agentMessage", "More room for your conversation."))))
+        render(state, narrow = true)
+        val density = compose.activity.resources.displayMetrics.density
+        val height = compose.onNodeWithTag("chat-composer").fetchSemanticsNode().boundsInRoot.height / density
+        assertTrue("Empty composer occupies $height dp", height <= 128f)
+        compose.onNodeWithText("Codex").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Model: gpt-6.1-sol").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Host default").assertIsDisplayed()
+        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        compose.onNodeWithTag("chat-settings").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Ask for approvals").assertIsDisplayed()
+        compose.onNodeWithText("Full access").assertIsDisplayed()
+        compose.onNodeWithText("Reasoning effort").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("High").performScrollTo().assertIsDisplayed()
+        screenshot("compact-chat-settings")
+        compose.onNodeWithText("Done").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Attach file or image").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Photo or image").assertIsDisplayed()
+        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        compose.onNodeWithContentDescription("Message input").assertIsDisplayed()
+        screenshot("compact-conversation")
+        compose.onNodeWithContentDescription("Message input").performClick()
+        compose.waitUntil(30000) { compose.activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true }
+        compose.onNodeWithTag("chat-settings").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Send").assertIsDisplayed()
+        screenshot("compact-keyboard")
+        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        // A long draft must stay bounded and retain its send control.
+        compose.runOnIdle { state.value = state.value.copy(draft = (1..12).joinToString("\n") { "Draft line $it" }) }
+        compose.onNodeWithContentDescription("Send").assertIsDisplayed().assertIsEnabled()
+        compose.waitUntil(10000) { compose.onNodeWithTag("chat-composer").fetchSemanticsNode().boundsInRoot.height / density <= 220f }
+        File(compose.activity.getExternalFilesDir(null), "compact-layout-metrics.json").writeText(buildJsonObject {
+            put("screenWidthDp", 320); put("emptyComposerHeightDp", height)
+            put("longDraftComposerHeightDp", compose.onNodeWithTag("chat-composer").fetchSemanticsNode().boundsInRoot.height / density)
+        }.toString())
+    }
+    @Test fun compactProjectRowsKeepAllFolderPathsAvailable() {
+        val roots = listOf("/workspace/a/very/long/project/path", "/workspace/second-folder")
+        val state = mutableStateOf(sample().copy(page = "projects", projects = listOf(Project("p1", "Project 1", roots))))
+        render(state, narrow = true, fontScale = 1.3f)
+        compose.onNodeWithText("2 folders", substring = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Folders for Project 1").performClick()
+        compose.onAllNodesWithText(roots[0]).onLast().assertIsDisplayed()
+        compose.onNodeWithText(roots[1]).assertIsDisplayed()
+        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithContentDescription("New chat in Project 1").assertIsDisplayed()
+        screenshot("compact-projects-large-font")
+        compose.runOnIdle { state.value = state.value.copy(selectedChat = Chat("c", "Conversation", "", "/workspace", "idle"), accessMode = "full") }
+        compose.onNodeWithTag("chat-settings").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Reasoning effort").performScrollTo().assertIsDisplayed()
     }
     @Test fun nativeAppUpdateDownloadsAndVerifiesInstalledSigningIdentity() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

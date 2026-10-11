@@ -1,6 +1,6 @@
 # In-app APK updates
 
-APK 0.4.0 introduced in-app updates; 0.4.1 extends the download deadline for slow VPN links. Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing 0.4.0 release users can use its updater to install 0.4.1. Future releases can be downloaded and installed from **Settings → App updates**.
+APK 0.4.0 introduced in-app updates; 0.4.1 extended the download deadline for slow VPN links. Version 0.5.0 adds [compact chat, project and composer layouts](mobile-0.5.0.md). Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing updater users can install 0.5.0 from **Settings → App updates**.
 
 ## On the phone
 
@@ -25,7 +25,7 @@ The build script runs Android tests/lint, builds debug/release APKs, copies the 
 To publish already-built APKs:
 
 ```bash
-node scripts/publish-app-update.mjs docs/release-notes/0.4.1.txt
+node scripts/publish-app-update.mjs docs/release-notes/0.5.0.txt
 ```
 
 Publishing verifies both APK signatures and actual package/version/minimum-SDK metadata using Android build-tools. It writes immutable APKs named by their SHA-256 and replaces each channel's manifest atomically. Future APK publications need no backend restart. The first updater deployment restarts the idle service to add these routes; that restart invalidates existing app login sessions.
@@ -54,7 +54,7 @@ This reads the existing private login locally and downloads both channels, check
 
 The temporary test backend was closed. The deployed user service remains active. Physical-phone source-permission prompts and completed interactive installation remain unverified; the emulator installer check intentionally stops before confirmation. Model-provider HTTP 401 from the earlier task is independent of APK updates and was not re-tested here.
 
-## Current 0.4.1 verification
+## Historical 0.4.1 verification
 
 The 60 MB debug transfer exposed an overly short download deadline: the proxy check timed out after three minutes, and the five-minute retry reached 56,341,592 of 60,386,031 bytes before timing out. This was a progressing transfer, so 0.4.1 extends the client/verifier deadline to 15 minutes while retaining the client's 30-second stalled-read timeout. The release APK passed both earlier checks.
 
@@ -65,3 +65,11 @@ The newer 0.4.1 debug APK was downloaded and verified against the emulator's ins
 `node scripts/verify-app-update.mjs https://codex.geeksun.ir --local` passed for both channels: complete authenticated downloads, actual sizes (release 2,680,590 bytes; debug 59,614,133 bytes), SHA-256, matching published metadata, and rejection of unauthorized/browser-Origin requests. See `artifacts/v0.4.1-update-proxy.json`. This publication required no second service restart. The temporary test backend was closed and the deployed service remained active.
 
 The separate model-provider HTTP 401 was subsequently repaired on October 11. Real text replies and a follow-up pass through the deployed endpoint; see [the authentication repair](local-wireguard-deployment.md#provider-authentication-repaired-on-october-11-2026). That service restart requires fresh phone login. It does not require another APK update.
+
+## Current 0.5.0 layout update
+
+Version 0.5.0/code 6 adds compact chat/project rows and an integrated composer with mode/model/access in one toolbar. Full access descriptions and reasoning effort open in Chat settings. See [the layout guide](mobile-0.5.0.md) for the 36 JVM tests, clean lint, five emulator layout checks, explicit keyboard-visibility check and reviewed captures.
+
+Both APKs passed signature and actual package/version/minimum-SDK checks; their signing identities match 0.4.1. Release is 2,742,222 bytes and debug is 60,486,055 bytes. `node scripts/publish-app-update.mjs docs/release-notes/0.5.0.txt` published both channels without a backend restart. Existing updater users can tap **Check for updates** in Settings to discover this release immediately instead of waiting for the automatic check interval. Previous delivery files remain under `artifacts/v0.4.1/`.
+
+`node scripts/verify-app-update.mjs https://codex.geeksun.ir --local` passed complete authenticated downloads of both 0.5.0 channels, exact sizes/SHA-256, matching local metadata and unauthorized/browser-Origin rejection (`artifacts/v0.5.0-update-proxy.json`). Delivery checksums passed, and the release APK installed over the existing emulator release. Physical-phone update installation remains unverified.

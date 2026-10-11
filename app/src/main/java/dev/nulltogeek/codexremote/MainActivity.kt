@@ -14,6 +14,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -27,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontFamily
@@ -34,6 +36,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -111,10 +116,10 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
     Scaffold(containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(title = {
+            TopAppBar(expandedHeight = 56.dp, title = {
                 Column {
                     Text(if (state.diff != null) "Changed code" else state.selectedChat?.title ?: "Codex Remote", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                    if (state.signedIn) Text(state.host, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (state.signedIn) Text(state.host, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }, navigationIcon = {
                 if (state.diff != null || state.selectedChat != null) IconButton(onClick = { if (state.diff != null) vm.showDiff(null) else vm.page("chats") }) {
@@ -127,9 +132,17 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
         }, bottomBar = {
-            if (state.signedIn && state.selectedChat == null && state.diff == null) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                listOf(Triple("chats", "Chats", Icons.AutoMirrored.Outlined.Chat), Triple("projects", "Projects", Icons.Outlined.FolderOpen), Triple("settings", "Settings", Icons.Outlined.Settings)).forEach { (page, label, icon) ->
-                    NavigationBarItem(selected = state.page == page, onClick = { vm.page(page) }, icon = { Icon(icon, label) }, label = { Text(label) })
+            if (state.signedIn && state.selectedChat == null && state.diff == null) Surface(color = MaterialTheme.colorScheme.surface) {
+                Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    listOf(Triple("chats", "Chats", Icons.AutoMirrored.Outlined.Chat), Triple("projects", "Projects", Icons.Outlined.FolderOpen), Triple("settings", "Settings", Icons.Outlined.Settings)).forEach { (page, label, icon) ->
+                        TextButton(onClick = { vm.page(page) }, modifier = Modifier.weight(1f).height(48.dp).semantics { selected = state.page == page },
+                            colors = ButtonDefaults.textButtonColors(containerColor = if (state.page == page) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                contentColor = if (state.page == page) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant),
+                            contentPadding = PaddingValues(horizontal = 6.dp)) {
+                            Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.width(6.dp))
+                            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                        }
+                    }
                 }
             }
         }) { padding ->
@@ -197,33 +210,30 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             category && projectMatch && (chat.title.contains(query, true) || chat.preview.contains(query, true))
         }
     }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(project?.name ?: "Your workspace", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                    Text("${state.projects.size} projects · ${state.chats.size} loaded chats", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(project?.name ?: "Your workspace", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        StatusDot(state.connection == "Connected"); Spacer(Modifier.width(6.dp))
+                        Text("${state.projects.size} projects · ${state.chats.size} loaded chats", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
+                if (project != null) IconButton(onClick = { vm.filterProject(null) }) { Icon(Icons.Outlined.Close, "All projects") }
                 FilledTonalIconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat") }
-            }
-        }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                StatusDot(state.connection == "Connected"); Spacer(Modifier.width(6.dp))
-                Text(if (state.connection == "Connected") "Connected to your computer" else "Offline", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (project != null) { Spacer(Modifier.weight(1f)); TextButton(onClick = { vm.filterProject(null) }) { Text("All projects") } }
             }
         }
         if (state.pending.isNotEmpty()) item {
             Surface(onClick = { approval(state.pending.first()) }, color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
-                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.NotificationsActive, null); Spacer(Modifier.width(12.dp))
                     Column { Text("Your input is needed", fontWeight = FontWeight.SemiBold); Text("${state.pending.size} pending request(s)", style = MaterialTheme.typography.bodySmall) }
                 }
             }
         }
-        item { OutlinedTextField(query, vm::search, Modifier.fillMaxWidth(), placeholder = { Text("Search all chats") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, singleLine = true) }
-        item { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Recent", "Archived", "Agent chats").forEachIndexed { i, label -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(label) }) } } }
+        item { CompactSearch(query, vm::search) }
+        item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("Recent", "Archived", "Agent chats").forEachIndexed { i, label -> FilterChip(selected = tab == i, onClick = { tab = i }, label = { Text(label) }) } } }
         if (list.isEmpty()) item { EmptyState(if (query.isNotEmpty()) "No matching chats" else "No chats here yet", "Choose a project or start a conversation.") }
         items(list, key = { it.id }, contentType = { "chat" }) { chat ->
             val p = state.projects.find { it.id == (state.assignments[chat.id] ?: chat.projectId) } ?: state.projects.find { chat.cwd in it.roots }
@@ -235,17 +245,40 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
 }
 
+@Composable private fun CompactSearch(query: String, onQuery: (String) -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), shape = RoundedCornerShape(14.dp)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.Search, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(8.dp))
+            BasicTextField(query, onQuery, modifier = Modifier.weight(1f).padding(vertical = 12.dp).semantics { contentDescription = "Search all chats" },
+                singleLine = true, textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), decorationBox = { input ->
+                    Box { if (query.isEmpty()) Text("Search all chats", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant); input() }
+                })
+            if (query.isNotEmpty()) IconButton(onClick = { onQuery("") }) { Icon(Icons.Outlined.Close, "Clear search", Modifier.size(18.dp)) }
+            else Spacer(Modifier.width(12.dp))
+        }
+    }
+}
+
 @Composable private fun ChatRow(chat: Chat, project: String, onClick: () -> Unit) {
-    Surface(onClick = onClick, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp)) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.Top) {
-            Icon(if (chat.parentId != null || chat.source == "subAgent") Icons.Outlined.AccountTree else Icons.AutoMirrored.Outlined.Chat, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) { Text(chat.title, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold); if (chat.pinned) Icon(Icons.Outlined.PushPin, "Pinned", Modifier.size(14.dp)) }
-                if (chat.preview.isNotBlank() && chat.preview != chat.title) Text(chat.preview, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Surface(onClick = onClick, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(10.dp)) {
+                Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
+                    Icon(if (chat.parentId != null || chat.source == "subAgent") Icons.Outlined.AccountTree else Icons.AutoMirrored.Outlined.Chat, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(project, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    if (chat.status == "active") { Spacer(Modifier.width(10.dp)); StatusDot(true); Spacer(Modifier.width(4.dp)); Text("Running", style = MaterialTheme.typography.labelSmall) }
+                    Text(chat.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    if (chat.pinned) Icon(Icons.Outlined.PushPin, "Pinned", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                }
+                if (chat.preview.isNotBlank() && chat.preview != chat.title) Text(chat.preview, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(project, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    if (chat.status == "active") { StatusDot(true); Spacer(Modifier.width(4.dp)); Text("Running", style = MaterialTheme.typography.labelSmall) }
                 }
             }
         }
@@ -253,25 +286,46 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 }
 
 @Composable private fun ProjectScreen(state: ScreenState, vm: RemoteViewModel) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { Text("Projects", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Saved on ${state.host}", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    var folders by remember { mutableStateOf<Project?>(null) }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        item {
+            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Projects", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Saved on ${state.host}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text("${state.projects.size}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            }
+        }
         items(state.projects, key = { it.id }) { project ->
-            Surface(onClick = { vm.filterProject(project.id) }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp)) {
-                Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.FolderOpen, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(12.dp)); Text(project.name, Modifier.weight(1f), fontWeight = FontWeight.SemiBold); IconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat in ${project.name}") } }
-                    project.roots.forEach { Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    Text("${state.chats.count { state.assignments[it.id] == project.id || it.projectId == project.id || it.cwd in project.roots }} loaded chats", style = MaterialTheme.typography.labelMedium)
+            val count = state.chats.count { state.assignments[it.id] == project.id || it.projectId == project.id || it.cwd in project.roots }
+            Surface(onClick = { vm.filterProject(project.id) }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
+                Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(10.dp)) {
+                        IconButton(onClick = { folders = project }) { Icon(Icons.Outlined.FolderOpen, "Folders for ${project.name}", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary) }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(project.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(project.roots.firstOrNull() ?: "No folder", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("$count loaded chats" + if (project.roots.size > 1) " · ${project.roots.size} folders" else "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat in ${project.name}", Modifier.size(20.dp)) }
                 }
             }
         }
         if (state.projects.isEmpty()) item { EmptyState("No projects loaded", "Connect to your computer and refresh its project inventory.") }
     }
+    folders?.let { project -> AlertDialog(onDismissRequest = { folders = null }, title = { Text(project.name) },
+        text = { SelectionContainer { Column(Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            project.roots.forEach { Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace) }
+            if (project.roots.isEmpty()) Text("No folders saved for this project.")
+        } } }, confirmButton = { TextButton(onClick = { folders = null }) { Text("Close") } }) }
 }
 
 @Composable private fun Conversation(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit) {
-    val listState = rememberLazyListState(); var modelMenu by remember { mutableStateOf(false) }; var effortMenu by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
     var followTail by remember { mutableStateOf(true) }
-    var attachmentMenu by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) vm.attach(uris) }
     LaunchedEffect(listState) { snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }.collect { (scrolling, canScroll) -> if (scrolling) followTail = !canScroll } }
     val last = state.timeline.lastOrNull()
@@ -290,7 +344,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             }, style = MaterialTheme.typography.labelSmall)
             Spacer(Modifier.weight(1f)); if (active) TextButton(onClick = { vm.interrupt() }, enabled = state.connection == "Connected") { Icon(Icons.Outlined.Stop, null, Modifier.size(16.dp)); Text("Stop") }
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (state.olderCursor != null) item { TextButton(onClick = { vm.loadOlder() }, enabled = !state.loading && state.connection == "Connected", modifier = Modifier.fillMaxWidth()) { Text("Load earlier messages") } }
             if (state.timeline.isEmpty() && !state.historyAvailable && state.selectedChat?.preview?.isNotBlank() == true) item { EmptyState("Earlier messages unavailable", "New messages will appear here. You can continue this conversation.") }
             else if (state.timeline.isEmpty()) item { EmptyState(if (state.chatMode == "chat") "A new conversation" else "Ready to build", if (state.chatMode == "chat") "Ask a question, share an image, or discuss an idea." else "Describe the work, attach a file, and choose how Codex can access your computer.") }
@@ -299,46 +353,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 Button(onClick = { approval(request) }, Modifier.fillMaxWidth()) { Text(if (request.method.contains("Approval")) "Review requested action" else "Answer Codex") }
             }
         }
-        Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
-            Column(Modifier.fillMaxWidth().imePadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ComposerOptions(state, vm)
-                Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                    Box {
-                        TextButton(onClick = { modelMenu = true }) { Text(state.models.find { it.id == state.selectedModel }?.name ?: "Host default", maxLines = 1); Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp)) }
-                        DropdownMenu(modelMenu, { modelMenu = false }) {
-                            DropdownMenuItem(text = { Text("Host default") }, onClick = { vm.model(""); modelMenu = false })
-                            state.models.forEach { model -> DropdownMenuItem(text = { Text(model.name) }, onClick = { vm.model(model.id); modelMenu = false }) }
-                        }
-                    }
-                    Box {
-                        val efforts = state.models.find { it.id == state.selectedModel }?.efforts.orEmpty()
-                        if (efforts.isNotEmpty()) TextButton(onClick = { effortMenu = true }) { Text(state.selectedEffort.ifEmpty { "Effort" }); Icon(Icons.Outlined.ExpandMore, null, Modifier.size(16.dp)) }
-                        DropdownMenu(effortMenu, { effortMenu = false }) { efforts.forEach { effort -> DropdownMenuItem(text = { Text(effort) }, onClick = { vm.effort(effort); effortMenu = false }) } }
-                    }
-                }
-                if (state.attachments.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(state.attachments, key = { it.id }) { file -> InputChip(selected = false, onClick = {},
-                        label = { Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp)) },
-                        leadingIcon = { Icon(if (file.mimeType.startsWith("image/")) Icons.Outlined.Image else Icons.Outlined.InsertDriveFile, null, Modifier.size(16.dp)) },
-                        trailingIcon = { IconButton(onClick = { vm.removeAttachment(file.id) }, enabled = !state.sending, modifier = Modifier.size(24.dp)) { Icon(Icons.Outlined.Close, "Remove ${file.name}", Modifier.size(16.dp)) } }) }
-                }
-                if (state.uploading) Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)); Text("Uploading attachment…", style = MaterialTheme.typography.labelSmall) }
-                if (state.uncertainSend) TextButton(onClick = { vm.refresh() }) { Text("Refresh and check delivery") }
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box {
-                        IconButton(onClick = { attachmentMenu = true }, enabled = state.connection == "Connected" && !state.uploading && !state.sending && state.selectedChat?.archived != true) { Icon(Icons.Outlined.AttachFile, "Attach file or image") }
-                        DropdownMenu(attachmentMenu, { attachmentMenu = false }) {
-                            DropdownMenuItem(text = { Text("Photo or image") }, leadingIcon = { Icon(Icons.Outlined.Image, null) }, onClick = { attachmentMenu = false; picker.launch(arrayOf("image/*")) })
-                            DropdownMenuItem(text = { Text("File") }, leadingIcon = { Icon(Icons.Outlined.InsertDriveFile, null) }, onClick = { attachmentMenu = false; picker.launch(arrayOf("*/*")) })
-                        }
-                    }
-                    OutlinedTextField(state.draft, vm::draft, Modifier.weight(1f), placeholder = { Text(if (state.selectedChat?.status == "active") "Guide the current work…" else if (state.chatMode == "chat") "Ask a question…" else "Ask Codex to work…") }, maxLines = 5)
-                    FilledIconButton(onClick = { vm.send() }, enabled = (state.draft.isNotBlank() || state.attachments.isNotEmpty()) && state.connection == "Connected" && !state.uploading && !state.sending && !state.uncertainSend && state.selectedChat?.archived != true, modifier = Modifier.size(48.dp)) {
-                        if (state.sending) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Icon(Icons.AutoMirrored.Outlined.Send, "Send")
-                    }
-                }
-            }
-        }
+        ChatComposer(state, vm, onPick = { picker.launch(it) })
     }
 }
 
@@ -347,7 +362,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     val user = item.type == "userMessage"; val tool = item.type !in listOf("userMessage", "agentMessage")
     val visible = item.text.take(visibleLimit)
     Surface(color = if (user) MaterialTheme.colorScheme.surfaceVariant else if (tool) MaterialTheme.colorScheme.surface else Color.Transparent, shape = RoundedCornerShape(12.dp)) {
-        Column(Modifier.fillMaxWidth().padding(if (tool || user) 14.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.fillMaxWidth().padding(if (tool || user) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(if (user) "YOU" else if (!tool) "CODEX" else when (item.type) { "commandExecution" -> "TERMINAL"; "fileChange" -> "CHANGES"; "reasoning" -> "WORKING"; else -> item.type.uppercase() }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
             if (item.detail.isNotBlank()) SelectionContainer { Text(item.detail, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
             if (visible.isNotBlank()) {

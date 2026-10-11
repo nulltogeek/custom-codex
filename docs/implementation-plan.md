@@ -12,6 +12,7 @@ The user selected a standalone server on this Linux machine using the existing C
 - [x] Replace expired provider credential and verify successful model streaming and follow-ups through HTTPS/WSS.
 - [x] Deliver username/password login, formatted code, attachments, access presets, coding/conversation modes and themes/animations.
 - [x] Deliver APK 0.4.1 with authenticated, verified in-app updates; test emulator installer confirmation and complete proxy downloads.
+- [x] Deliver compact 0.5.0 chat/project rows and a single-row composer toolbar; verify narrow screens, larger text, project paths, model/access/effort controls and keyboard visibility.
 - [ ] Verify a real model-triggered approval answered from the phone.
 - [ ] Verify an actual phone through WireGuard and measure hardware performance.
 
