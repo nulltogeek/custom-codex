@@ -243,6 +243,23 @@ class RpcClientTest {
         }
     }
 
+    @Test fun eventConsumerSeesItsReconnectCursorBeforeItCanReactToDelivery() = runBlocking {
+        Host().use { host ->
+            val rpc = host.client()
+            try {
+                rpc.connect()
+                // Unconfined resumes synchronously inside the channel send, so the
+                // assertion tests ordering rather than depending on thread timing.
+                val cursor = async(Dispatchers.Unconfined) {
+                    val event = rpc.events.receive()
+                    Triple(event.obj("params").text("delta"), rpc.epoch, rpc.sequence)
+                }
+                host.event(1, "question event")
+                assertEquals(Triple("question event", "runtime-one", 1L), withTimeout(5000) { cursor.await() })
+            } finally { rpc.close() }
+        }
+    }
+
     @Test fun reconnectResumesCursorAndBackendRestartAcceptsNewSequence() = runBlocking {
         Host().use { host ->
             val rpc = host.client()

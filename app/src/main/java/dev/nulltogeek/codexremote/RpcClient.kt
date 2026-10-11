@@ -27,8 +27,8 @@ class RpcClient {
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
     val events = Channel<JsonObject>(1024)
     val status = MutableStateFlow("Offline")
-    var epoch = ""; private set
-    var sequence = 0L; private set
+    @Volatile var epoch = ""; private set
+    @Volatile var sequence = 0L; private set
     private var socket: WebSocket? = null
     private var opened: CompletableDeferred<Unit>? = null
     private var endpoint = ""; private var token = ""
@@ -187,8 +187,14 @@ class RpcClient {
                         val next = (message["sequence"] as? JsonPrimitive)?.longOrNull ?: 0
                         val incomingEpoch = message.text("epoch")
                         if (incomingEpoch == epoch && next <= sequence) return
-                        if (!events.trySend(JsonObject(message.obj("message") + mapOf("_bridgeSequence" to JsonPrimitive(next), "_bridgeEpoch" to JsonPrimitive(incomingEpoch)))).isSuccess) { webSocket.close(1013, "Resynchronize"); return }
+                        val previousEpoch = epoch; val previousSequence = sequence
+                        // A receiver may resume inside trySend. Publish its reconnect
+                        // cursor first, but keep undelivered events eligible for replay.
                         epoch = incomingEpoch; sequence = next
+                        if (!events.trySend(JsonObject(message.obj("message") + mapOf("_bridgeSequence" to JsonPrimitive(next), "_bridgeEpoch" to JsonPrimitive(incomingEpoch)))).isSuccess) {
+                            epoch = previousEpoch; sequence = previousSequence
+                            webSocket.close(1013, "Resynchronize"); return
+                        }
                     }
                 } catch (_: Exception) { webSocket.close(1002, "Invalid host message") }
             }
