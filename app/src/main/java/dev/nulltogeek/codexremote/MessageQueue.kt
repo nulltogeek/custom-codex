@@ -111,7 +111,14 @@ internal suspend fun submitQueuedMessage(message: QueuedMessage, call: suspend (
     if (message.chatId !in loaded) call("thread/resume", buildJsonObject {
         put("threadId", message.chatId); put("excludeTurns", true); options.forEach { (key, value) -> put(key, value) }
     })
-    val thread = call("thread/read", buildJsonObject { put("threadId", message.chatId); put("includeTurns", true) }).obj("thread")
+    val metadata = call("thread/read", buildJsonObject { put("threadId", message.chatId); put("includeTurns", false) })
+    val summary = metadata.obj("thread")
+    if (summary.obj("status").text("type") == "active" || summary.array("turns").any { it.jsonObject.text("status") == "inProgress" }) throw QueueWaitingException()
+    // Reuse legacy/new/ephemeral/paginated history compatibility, with the live
+    // metadata already fetched. Running queues never download full history.
+    val thread = readThreadHistory(message.chatId) { method, params ->
+        if (method == "thread/read" && params["includeTurns"]?.jsonPrimitive?.booleanOrNull == false) metadata else call(method, params)
+    }.thread
     if (thread.obj("status").text("type") == "active" || thread.array("turns").any { it.jsonObject.text("status") == "inProgress" }) throw QueueWaitingException()
     val lastStatus = (thread.array("turns").lastOrNull() as? JsonObject)?.text("status")
     check(allowFailedTurn || lastStatus !in listOf("failed", "interrupted")) { "Previous work ${if (lastStatus == "failed") "failed" else "was stopped"}. Review it, then resume the queue." }

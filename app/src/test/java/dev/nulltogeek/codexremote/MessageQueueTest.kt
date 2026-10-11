@@ -170,4 +170,44 @@ class MessageQueueTest {
             assertFalse("Resume allows only one new turn", "chat" in queue.state.value.resumedChats)
         }
     }
+    @Test fun activeQueuesReadOnlyMetadataAndNeverDownloadHistory() = runBlocking {
+        var reads = 0
+        assertTrue(runCatching { submitQueuedMessage(first, { method, params ->
+            if (method == "thread/loaded/list") buildJsonObject { put("data", buildJsonArray { add("chat") }) }
+            else {
+                assertEquals("thread/read", method)
+                assertFalse(params["includeTurns"]!!.jsonPrimitive.boolean)
+                reads++
+                thread("active", "inProgress")
+            }
+        }) { fail("Running work must not receive queued input") } }.exceptionOrNull() is QueueWaitingException)
+        assertEquals(1, reads)
+    }
+    @Test fun newlyCreatedChatsWithoutRolloutAndEphemeralChatsCanReceiveTheirFirstMessage() = runBlocking {
+        for (ephemeral in listOf(false, true)) {
+            var historyReads = 0; var mutations = 0
+            submitQueuedMessage(first, { method, params -> when (method) {
+                "thread/loaded/list" -> buildJsonObject { put("data", buildJsonArray { add("chat") }) }
+                "thread/read" -> if (params["includeTurns"]!!.jsonPrimitive.boolean) {
+                    historyReads++; throw RpcException(-32600, "No rollout found for this new thread")
+                } else buildJsonObject { put("thread", buildJsonObject { put("id", "chat"); put("status", jsonObject("type" to "idle")); put("ephemeral", ephemeral) }) }
+                else -> { assertEquals("turn/start", method); mutations++; buildJsonObject {} }
+            } }) {}
+            assertEquals(1, mutations)
+            assertEquals(if (ephemeral) 0 else 1, historyReads)
+        }
+    }
+    @Test fun paginatedQueueChecksTheLatestTurnBeforeStarting() = runBlocking {
+        var mutations = 0
+        assertTrue(runCatching { submitQueuedMessage(first, { method, params -> when (method) {
+            "thread/loaded/list" -> buildJsonObject { put("data", buildJsonArray { add("chat") }) }
+            "thread/read" -> {
+                assertFalse(params["includeTurns"]!!.jsonPrimitive.boolean)
+                buildJsonObject { put("thread", buildJsonObject { put("id", "chat"); put("status", jsonObject("type" to "idle")); put("historyMode", "paginated") }) }
+            }
+            "thread/turns/list" -> buildJsonObject { put("data", buildJsonArray { add(jsonObject("id" to "turn", "status" to "inProgress")) }) }
+            else -> { mutations++; buildJsonObject {} }
+        } }) {} }.exceptionOrNull() is QueueWaitingException)
+        assertEquals(0, mutations)
+    }
 }
