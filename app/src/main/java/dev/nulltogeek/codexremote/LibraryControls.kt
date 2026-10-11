@@ -13,6 +13,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -43,21 +48,40 @@ internal fun withoutDeletedChat(state: ScreenState, id: String): ScreenState {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable internal fun SwipeArchiveRow(chat: Chat, enabled: Boolean, archive: () -> Unit, content: @Composable () -> Unit) {
+@Composable internal fun SwipeArchiveRow(chat: Chat, enabled: Boolean, archive: () -> Unit,
+    deleteEnabled: Boolean = false, delete: () -> Unit = {}, content: @Composable () -> Unit) {
     val latestArchive by rememberUpdatedState(archive)
+    val latestDelete by rememberUpdatedState(delete)
     val latestEnabled by rememberUpdatedState(enabled)
+    val latestDeleteEnabled by rememberUpdatedState(deleteEnabled)
+    // These are physical right/left gestures in either layout direction.
+    val rightSwipe = if (LocalLayoutDirection.current == LayoutDirection.Ltr) SwipeToDismissBoxValue.StartToEnd else SwipeToDismissBoxValue.EndToStart
+    val leftSwipe = if (rightSwipe == SwipeToDismissBoxValue.StartToEnd) SwipeToDismissBoxValue.EndToStart else SwipeToDismissBoxValue.StartToEnd
+    val latestRightSwipe by rememberUpdatedState(rightSwipe)
     val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { target ->
-        if (target == SwipeToDismissBoxValue.StartToEnd && latestEnabled) latestArchive()
+        if (target != SwipeToDismissBoxValue.Settled) {
+            if (target == latestRightSwipe && latestEnabled) latestArchive()
+            else if (target != latestRightSwipe && latestDeleteEnabled) latestDelete()
+        }
         // Confirmation owns the action; the row returns to its resting position.
         false
     }, positionalThreshold = { it * 0.35f })
-    SwipeToDismissBox(swipe, modifier = Modifier.testTag("archive-swipe:${chat.id}"),
-        enableDismissFromStartToEnd = enabled, enableDismissFromEndToStart = false, gesturesEnabled = enabled,
+    SwipeToDismissBox(swipe, modifier = Modifier.testTag("archive-swipe:${chat.id}").semantics {
+        customActions = buildList {
+            if (enabled) add(CustomAccessibilityAction(if (chat.archived) "Restore chat" else "Archive chat") { latestArchive(); true })
+            if (deleteEnabled) add(CustomAccessibilityAction("Delete chat") { latestDelete(); true })
+        }
+    }, enableDismissFromStartToEnd = if (rightSwipe == SwipeToDismissBoxValue.StartToEnd) enabled else deleteEnabled,
+        enableDismissFromEndToStart = if (rightSwipe == SwipeToDismissBoxValue.EndToStart) enabled else deleteEnabled,
+        gesturesEnabled = enabled || deleteEnabled,
         backgroundContent = {
-            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) {
-                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(if (chat.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, null)
-                    Spacer(Modifier.width(8.dp)); Text(if (chat.archived) "Restore" else "Archive")
+            val deleting = swipe.dismissDirection == leftSwipe
+            val colors = MaterialTheme.colorScheme
+            Surface(color = if (deleting) colors.errorContainer else colors.primaryContainer, shape = RoundedCornerShape(14.dp)) {
+                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = if ((if (deleting) leftSwipe else rightSwipe) == SwipeToDismissBoxValue.StartToEnd) Arrangement.Start else Arrangement.End) {
+                    Icon(if (deleting) Icons.Outlined.DeleteOutline else if (chat.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, null)
+                    Spacer(Modifier.width(8.dp)); Text(if (deleting) "Delete" else if (chat.archived) "Restore" else "Archive")
                 }
             }
         }) { content() }

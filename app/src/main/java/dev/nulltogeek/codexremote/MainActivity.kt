@@ -190,7 +190,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 screen == "projects" -> ProjectScreen(state, vm)
                 screen == "settings" -> SettingsScreen(state, vm)
                 screen == "archived" -> ChatsScreen(state, vm, approval = { approval = it }, archive = { confirmArchive = it }, delete = { confirmDelete = it }, archivedOnly = true)
-                else -> ChatsScreen(state, vm, approval = { approval = it }, archive = { confirmArchive = it })
+                else -> ChatsScreen(state, vm, approval = { approval = it }, archive = { confirmArchive = it }, delete = { confirmDelete = it })
             } }
         }
     }
@@ -300,14 +300,9 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             if (list.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (archivedOnly) "No archived chats" else if (tab == 3) "No favorite chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (archivedOnly) "Chats you archive appear here. Open one to read or restore it." else if (tab == 3) "Tap a chat's star to keep it here." else "Choose a project or start a conversation.") }
             items(list, key = { it.id }, contentType = { "chat" }) { chat ->
                 val p = state.projects.find { it.id == (state.assignments[chat.id] ?: chat.projectId) } ?: state.projects.find { chat.cwd in it.roots }
-                SwipeArchiveRow(chat, canArchive(state, chat), archive = { archive(chat) }) {
-                    Column {
-                        ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) })
-                        if (archivedOnly) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            TextButton(onClick = { archive(chat) }, enabled = canArchive(state, chat)) { Icon(Icons.Outlined.Unarchive, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Restore") }
-                            TextButton(onClick = { delete(chat) }, enabled = canDeleteChat(state, chat)) { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Delete") }
-                        }
-                    }
+                SwipeArchiveRow(chat, canArchive(state, chat), archive = { archive(chat) },
+                    deleteEnabled = canDeleteChat(state, chat), delete = { delete(chat) }) {
+                    ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) })
                 }
             }
             if (page != null) item(key = "catalog-footer") {

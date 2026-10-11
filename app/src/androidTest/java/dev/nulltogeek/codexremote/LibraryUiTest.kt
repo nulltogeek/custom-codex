@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
@@ -52,6 +55,36 @@ class LibraryUiTest {
         compose.waitForIdle(); assertEquals(1, requests)
     }
 
+    @Test fun archivedSwipesRequestRestoreAndDeleteInBothLayoutDirections() {
+        val rtl = mutableStateOf(false)
+        val deleteEnabled = mutableStateOf(true)
+        var restores = 0; var deletes = 0
+        val chat = Chat("two-way", "Archived fixture", "", "", archived = true)
+        render { CompositionLocalProvider(LocalLayoutDirection provides if (rtl.value) LayoutDirection.Rtl else LayoutDirection.Ltr) {
+            SwipeArchiveRow(chat, true, { restores++ }, deleteEnabled.value, { deletes++ }) {
+                Surface { Text("Archived fixture", Modifier.fillMaxWidth().padding(24.dp)) }
+            }
+        } }
+        val row = compose.onNodeWithTag("archive-swipe:two-way")
+        row.performTouchInput { swipeLeft() }
+        compose.waitUntil(10000) { deletes == 1 }; compose.waitForIdle()
+        row.performTouchInput { swipeRight() }
+        compose.waitUntil(10000) { restores == 1 }; compose.waitForIdle()
+        compose.onNodeWithText("Archived fixture").assertIsDisplayed()
+        compose.runOnIdle { rtl.value = true }
+        row.performTouchInput { swipeLeft() }
+        compose.waitUntil(10000) { deletes == 2 }; compose.waitForIdle()
+        row.performTouchInput { swipeRight() }
+        compose.waitUntil(10000) { restores == 2 }; compose.waitForIdle()
+        compose.runOnIdle { deleteEnabled.value = false }
+        row.performTouchInput { swipeLeft() }
+        compose.waitForIdle(); assertEquals(2, deletes)
+        val actions = row.fetchSemanticsNode().config[SemanticsActions.CustomActions]
+        assertEquals(listOf("Restore chat"), actions.map { it.label })
+        compose.runOnIdle { actions.single().action() }
+        assertEquals(3, restores)
+    }
+
     @Test fun chatFavoritesShowUnpagedSavedChatsAndAllowRemoval() {
         val cached = Chat("favorite", "Saved older chat", "Favorite preview", "/workspace", archived = true)
         val state = mutableStateOf(ScreenState(connection = "Connected", favoriteChats = listOf(cached),
@@ -85,7 +118,8 @@ class LibraryUiTest {
         compose.onNodeWithText("Archived agent").assertIsDisplayed()
         compose.onNodeWithText("Active conversation").assertDoesNotExist()
         compose.onNodeWithText("Other project archive").assertDoesNotExist()
-        compose.onAllNodesWithText("Delete")[0].performClick()
+        compose.onNodeWithTag("archive-swipe:archive").performTouchInput { swipeLeft() }
+        compose.waitUntil(10000) { delete != null }
         compose.runOnIdle { assertEquals(archived, delete) }
         compose.onNodeWithTag("archive-swipe:archive").performTouchInput { swipeRight() }
         compose.waitUntil(10000) { restore != null }

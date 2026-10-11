@@ -33,7 +33,7 @@ These changes are published as **0.7.7 / build 15** through **Settings → App
 updates**. Sent uploaded-image previews also require the updated bridge process,
 which adds the authenticated `GET /v1/attachments/image` endpoint. Publishing
 the APKs does not restart the running server. See
-[release verification](mobile-0.7.7-verification.md) for checks and limits.
+[release verification](mobile-0.7.9-verification.md) for checks and limits.
 
 When you scroll up, a down-arrow button appears at the bottom right. Tap it to
 return to the latest message and resume following new replies. The button keeps
@@ -62,3 +62,10 @@ and diffs keep their Back button, returning to the library section they came fro
 Deleting a chat invalidates old pagination requests and reloads the catalogue, so
 offset cursors cannot skip a conversation after the deleted row disappears.
 Deleted IDs also stay excluded from delayed events and saved cache updates.
+
+Chat rows use swipe actions without a permanent action bar: swipe right to archive
+an active chat or restore an archived chat, and swipe left to delete an archived
+chat. The directions stay the same in right-to-left layouts. Both actions open
+their confirmation dialogs; rows return to their resting position. Delete remains
+unavailable for active, busy or queued chats. Screen-reader custom actions and
+the conversation toolbar provide access to the same confirmations.
