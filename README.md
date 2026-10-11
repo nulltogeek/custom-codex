@@ -48,6 +48,7 @@ The build script produces `artifacts/codex-remote-debug.apk`, `artifacts/codex-r
 - [Setup and recovery](docs/runbook.md)
 - [In-app updates and current verification](docs/in-app-updates.md)
 - [Composer/rendering improvements](docs/mobile-0.3.0.md)
+- [Final replies, final changes and tappable image previews](docs/chat-display.md)
 - [Scroll loading, collapsible output and attachment previews](docs/mobile-0.6.0.md)
 - [Chats list pagination and refresh recovery](docs/mobile-0.7.3.md)
 - [Pull down to refresh Chats and Projects](docs/mobile-0.7.4.md)

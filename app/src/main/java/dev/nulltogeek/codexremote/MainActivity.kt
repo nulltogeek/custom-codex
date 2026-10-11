@@ -373,18 +373,20 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             }, style = MaterialTheme.typography.labelSmall)
             Spacer(Modifier.weight(1f)); if (active) TextButton(onClick = { vm.interrupt() }, enabled = state.connection == "Connected") { Icon(Icons.Outlined.Stop, null, Modifier.size(16.dp)); Text("Stop") }
         }
-        ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval)
+        ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval, loadImage = vm::attachmentImage)
         ChatComposer(state, vm, onPick = { picker.launch(it) })
     }
 }
 
-@Composable internal fun ChatTimeline(state: ScreenState, modifier: Modifier = Modifier, loadOlder: () -> Unit, showDiff: (Change) -> Unit, approval: (PendingInput) -> Unit) {
+@Composable internal fun ChatTimeline(state: ScreenState, modifier: Modifier = Modifier, loadOlder: () -> Unit, showDiff: (Change) -> Unit, approval: (PendingInput) -> Unit,
+    loadImage: suspend (String) -> ByteArray = { error("Image unavailable") }) {
     val listState = remember(state.selectedChat?.id) { LazyListState() }
     val followTail by remember(listState) { derivedStateOf { !listState.canScrollBackward } }
     val scope = rememberCoroutineScope()
     val hasOlder = state.olderCursor != null || state.hiddenOlderCount > 0
-    val last = state.timeline.lastOrNull()
-    LaunchedEffect(last?.id, last?.text?.length) { if (followTail && state.timeline.isNotEmpty()) listState.scrollToItem(0) }
+    val messages = remember(state.timeline, state.activeTurnId, state.selectedChat?.status) { conversationTimeline(state) }
+    val last = messages.lastOrNull()
+    LaunchedEffect(last?.id, last?.text?.length) { if (followTail && messages.isNotEmpty()) listState.scrollToItem(0) }
     LaunchedEffect(listState, state.olderCursor, state.hiddenOlderCount, state.olderError, state.olderLoading, state.connection) {
         if (hasOlder && state.olderError == null && !state.olderLoading && (state.hiddenOlderCount > 0 || state.connection == "Connected"))
             snapshotFlow { listState.layoutInfo.totalItemsCount > 0 && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= listState.layoutInfo.totalItemsCount - 3 }
@@ -395,7 +397,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             items(state.pending.filter { it.params.text("threadId") == state.selectedChat?.id }, key = { "pending-${it.id}" }) { request ->
                 Button(onClick = { approval(request) }, Modifier.fillMaxWidth()) { Text(if (request.method.contains("Approval")) "Review requested action" else "Answer Codex") }
             }
-            items(state.timeline.asReversed(), key = { it.id }, contentType = { it.type }) { item -> MessageItem(item, showDiff) }
+            items(messages.asReversed(), key = { it.id }, contentType = { it.type }) { item -> MessageItem(item, showDiff, loadImage) }
             if (state.timeline.isEmpty() && !state.historyAvailable && state.selectedChat?.preview?.isNotBlank() == true) item { EmptyState("Earlier messages unavailable", "New messages will appear here. You can continue this conversation.") }
             else if (state.timeline.isEmpty()) item { EmptyState(if (state.chatMode == "chat") "A new conversation" else "Ready to build", if (state.chatMode == "chat") "Ask a question, share an image, or discuss an idea." else "Describe the work, attach a file, and choose how Codex can access your computer.") }
             if (hasOlder) item(key = "history-footer") {
@@ -423,11 +425,11 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
 }
 
-@Composable private fun MessageItem(item: TimelineItem, showDiff: (Change) -> Unit) {
+@Composable private fun MessageItem(item: TimelineItem, showDiff: (Change) -> Unit, loadImage: suspend (String) -> ByteArray) {
     var visibleLimit by rememberSaveable(item.id) { mutableIntStateOf(6000) }
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
-    val user = item.type == "userMessage"; val tool = item.type !in listOf("userMessage", "agentMessage")
-    val label = if (user) "YOU" else if (!tool) "CODEX" else when (item.type) { "commandExecution" -> "TERMINAL"; "fileChange" -> "CHANGES"; "reasoning" -> "WORKING"; else -> item.type.uppercase() }
+    val user = item.type == "userMessage"; val tool = item.type !in listOf("userMessage", "agentMessage", "finalChanges", "error")
+    val label = if (user) "YOU" else if (item.type == "finalChanges") "CHANGES" else if (item.type == "error") "ERROR" else if (!tool) "CODEX" else item.type.uppercase()
     Surface(color = if (user) MaterialTheme.colorScheme.surfaceVariant else if (tool) MaterialTheme.colorScheme.surface else Color.Transparent, shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.fillMaxWidth().padding(if (tool || user) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (tool) Surface(onClick = { expanded = !expanded }, color = Color.Transparent) {
@@ -451,6 +453,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     else SelectionContainer { Text(visible, style = if (tool) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, fontFamily = if (tool) FontFamily.Monospace else FontFamily.Default) }
                 }
                 if (item.text.length > visibleLimit && item.type != "commandExecution") TextButton(onClick = { visibleLimit += 6000 }) { Text("Show more output") }
+                item.images.forEachIndexed { index, image -> HistoryImage(image.source, "${image.name} ${index + 1}", loadImage) }
                 item.changes.forEach { change -> OutlinedButton(onClick = { showDiff(change) }, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Difference, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(change.path, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
             }
             }

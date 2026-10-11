@@ -6,7 +6,6 @@ import android.provider.OpenableColumns
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.ByteArrayOutputStream
-import androidx.core.graphics.scale
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.*
@@ -237,6 +236,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun effort(value: String) { mutable.update { it.copy(selectedEffort = value) } }
     fun noticeDismiss() { mutable.update { it.copy(notice = null) } }
     fun showDiff(change: Change?) { mutable.update { it.copy(diff = change) } }
+    suspend fun attachmentImage(source: String): ByteArray = rpc.downloadAttachmentImage(source)
     fun refresh() {
         // Claim the refresh before launching IO so a second gesture/button tap
         // cannot start another request while the first coroutine is queued.
@@ -328,10 +328,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val revision = mutable.value.historyRevision
         val loaded = readThreadHistory(id, rpc::call)
         val previous = cachedThreads[id]?.jsonObject
-        val raw = if (loaded.olderCursor != null && previous != null) JsonObject(loaded.thread + ("turns" to
+        val mergedThread = if (loaded.olderCursor != null && previous != null) JsonObject(loaded.thread + ("turns" to
             JsonArray((previous.array("turns") + loaded.thread.array("turns")).distinctBy { it.jsonObject.text("id") }.map { turn ->
                 loaded.thread.array("turns").find { it.jsonObject.text("id") == turn.jsonObject.text("id") } ?: turn
             }))) else loaded.thread
+        val raw = retainFinalDiffs(mergedThread, mutable.value.timeline.takeIf { mutable.value.selectedChat?.id == id }.orEmpty(), previous)
         if (loaded.authoritative || !cachedThreads.containsKey(id)) cachedThreads = buildJsonObject {
             cachedThreads.entries.toList().takeLast(7).forEach { (k, v) -> put(k, v) }; put(id, raw)
         }
@@ -506,14 +507,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: error("Cannot decode the selected image")
                         try {
                             bytes = ByteArrayOutputStream().use { output -> check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)); output.toByteArray() }
-                            val scale = minOf(1f, 256f / maxOf(bitmap.width, bitmap.height))
-                            val thumb = bitmap.scale((bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1))
-                            try {
-                                val dir = java.io.File(getApplication<Application>().cacheDir, "attachment-previews").apply { mkdirs() }
-                                val file = java.io.File(dir, "$id.jpg")
-                                file.outputStream().use { check(thumb.compress(Bitmap.CompressFormat.JPEG, 80, it)) }
-                                previewPath = file.absolutePath
-                            } finally { if (thumb !== bitmap) thumb.recycle() }
+                            val dir = java.io.File(getApplication<Application>().cacheDir, "attachment-previews").apply { mkdirs() }
+                            val file = java.io.File(dir, "$id.jpg")
+                            file.outputStream().use { it.write(bytes) }
+                            previewPath = file.absolutePath
                         } finally { bitmap.recycle() }
                         mime = "image/jpeg"; name = name.substringBeforeLast('.', name) + ".jpg"
                     }
@@ -618,7 +615,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 if (state.selectedChat?.id == threadId && sequence > state.snapshotSequence) {
                     val itemId = p.text("itemId").ifEmpty { p.obj("item").text("id") }
-                    state = state.copy(timeline = reduceTimeline(state.timeline, method, p), threadSequence = sequence,
+                    state = state.copy(timeline = reduceTimeline(state.timeline, method, p, state.activeTurnId), threadSequence = sequence,
                         itemSequences = if (itemId.isNotEmpty()) state.itemSequences + (itemId to sequence) else state.itemSequences)
                     if (method == "turn/started") state = state.copy(lastTurnStatus = "inProgress")
                     if (method == "turn/started") state = state.copy(activeTurnId = p.obj("turn").text("id"))
@@ -626,10 +623,6 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     if (method == "turn/completed") state = state.copy(lastTurnStatus = p.obj("turn").text("status"),
                         notice = p.obj("turn").obj("error").text("message").ifEmpty { state.notice })
                     if (method == "error") state = state.copy(notice = p.obj("error").text("message", "The host reported an error"))
-                    if (method == "turn/diff/updated") {
-                        val diff = p.text("diff")
-                        if (diff.isNotEmpty()) state = state.copy(timeline = state.timeline.filter { it.id != "turn-diff" } + TimelineItem("turn-diff", "fileChange", "Turn diff", changes = listOf(Change("All changes", diff))))
-                    }
                 }
             }
             state

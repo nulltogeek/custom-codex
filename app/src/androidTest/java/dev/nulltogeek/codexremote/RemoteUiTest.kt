@@ -65,16 +65,14 @@ class RemoteUiTest {
         compose.runOnIdle { state.value = state.value.copy(page = "settings") }
         compose.onNodeWithText("Sign out").performScrollTo().assertIsDisplayed()
     }
-    @Test fun longConversationAndIncrementalDiffAreInspectable() {
+    @Test fun workingDetailsStayHiddenAndFinalDiffIsInspectable() {
         val state = mutableStateOf(sample().copy(selectedChat = Chat("c", "Android client", "", "/workspace", "active"),
             timeline = listOf(TimelineItem("user", "userMessage", "Build an Android client"), TimelineItem("agent", "agentMessage", "The native interface is ready."),
                 TimelineItem("terminal", "commandExecution", "All checks passed\n".repeat(1000), "./gradlew test", "completed"))))
         render(state); screenshot("dark-conversation")
         compose.onAllNodesWithText("Show more output").assertCountEquals(0)
-        compose.onNodeWithContentDescription("Expand TERMINAL").performClick()
-        compose.onAllNodesWithText("Show more output").assertCountEquals(1)
-        compose.onNodeWithContentDescription("Collapse TERMINAL").performClick()
-        compose.onAllNodesWithText("Show more output").assertCountEquals(0)
+        compose.onNodeWithContentDescription("Expand TERMINAL").assertDoesNotExist()
+        compose.onNodeWithText("All checks passed", substring = true).assertDoesNotExist()
         compose.runOnIdle { state.value = state.value.copy(diff = Change("app/MainActivity.kt", (1..1200).joinToString("\n") { "+line $it" })) }
         compose.onNodeWithText("app/MainActivity.kt").assertIsDisplayed()
         screenshot("dark-diff")
@@ -241,6 +239,27 @@ class RemoteUiTest {
         compose.runOnIdle { state.value = state.value.copy(timeline = state.value.timeline + TimelineItem("m101", "agentMessage", "Message 101")) }
         compose.onNodeWithText("Message 101").assertIsDisplayed()
         compose.onNodeWithTag("jump-to-latest").assertDoesNotExist()
+    }
+
+    @Test fun conversationShowsFinalChangesOnlyAfterWorkFinishes() {
+        val state = mutableStateOf(ScreenState(selectedChat = Chat("quiet", "Quiet chat", "", "", "active"), activeTurnId = "t",
+            timeline = listOf(
+                TimelineItem("r", "reasoning", "Hidden reasoning", turnId = "t", turnStatus = "inProgress"),
+                TimelineItem("c", "commandExecution", "Hidden output", turnId = "t", turnStatus = "inProgress"),
+                TimelineItem("p", "agentMessage", "Hidden progress", turnId = "t", phase = "commentary", turnStatus = "inProgress"),
+                TimelineItem("f", "fileChange", "Intermediate edits", changes = listOf(Change("app.kt", "+fixed")), turnId = "t", turnStatus = "inProgress"),
+                TimelineItem("a", "agentMessage", "Finished the update", turnId = "t", phase = "final_answer", turnStatus = "inProgress"))))
+        var opened: Change? = null
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { ChatTimeline(state.value, Modifier.fillMaxHeight(), {}, { opened = it }, {}) }
+        } }
+        listOf("Hidden reasoning", "Hidden output", "Hidden progress", "Intermediate edits", "app.kt").forEach { compose.onNodeWithText(it).assertDoesNotExist() }
+        compose.onNodeWithText("Finished the update").assertIsDisplayed()
+        compose.runOnIdle { state.value = state.value.copy(activeTurnId = "", selectedChat = state.value.selectedChat?.copy(status = "idle"),
+            timeline = state.value.timeline.map { it.copy(turnStatus = "completed") }) }
+        compose.onNodeWithText("1 changed file").assertIsDisplayed()
+        compose.onNodeWithText("app.kt").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(Change("app.kt", "+fixed"), opened) }
     }
 
     @Test fun cataloguePrefetchesAtTheEndAndErrorsWaitForRetry() {

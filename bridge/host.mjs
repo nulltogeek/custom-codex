@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { homedir, hostname } from 'node:os';
 import { createRequire } from 'node:module';
 import { WebSocketServer } from 'ws';
-import { receiveUpload } from './uploads.mjs';
+import { receiveUpload, serveUploadImage } from './uploads.mjs';
 import { serveAppUpdate, defaultUpdateDirectory } from './app-updates.mjs';
 const require = createRequire(import.meta.url);
 
@@ -136,6 +136,7 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
     }
     if (req.method !== 'GET') return reply(405, { error: 'Method not allowed' });
     const url = new URL(req.url, 'http://127.0.0.1');
+    if (url.pathname === '/v1/attachments/image') return serveUploadImage(url, res, uploadDirectory, reply);
     if (url.pathname === '/v1/app-update' || url.pathname.startsWith('/v1/app-update/')) return serveAppUpdate(url, res, updateDirectory, reply);
     if (url.pathname === '/v1/history') {
       try { return reply(200, readHistory(codexHome, url.searchParams.get('archived') === 'true', url.searchParams.get('cursor'), url.searchParams.get('searchTerm') ?? '')); }

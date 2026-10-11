@@ -123,6 +123,40 @@ class RpcClient {
             })
         }
     }
+    suspend fun downloadAttachmentImage(path: String): ByteArray = withContext(Dispatchers.IO) {
+        if (path.startsWith("data:")) {
+            val prefix = Regex("^data:image/(png|jpeg|webp|gif);base64,").find(path)
+                ?: throw IllegalArgumentException("Image preview unavailable")
+            val encoded = path.substring(prefix.value.length)
+            require(encoded.length <= ((20 * 1024 * 1024 + 2) / 3) * 4) { "Image preview unavailable" }
+            return@withContext java.util.Base64.getDecoder().decode(encoded).also {
+                require(it.isNotEmpty() && it.size <= 20 * 1024 * 1024) { "Image preview unavailable" }
+            }
+        }
+        require(path.startsWith("/") && path.length <= 4096 && !path.contains('\u0000')) { "Image preview unavailable" }
+        val url = (endpoint + "/v1/attachments/image").toHttpUrlOrNull()!!.newBuilder()
+            .addQueryParameter("path", path).build()
+        // Only the configured host receives the session, including when a server returns a redirect.
+        val call = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
+            .newCall(Request.Builder().url(url).header("Authorization", "Bearer $token").build())
+        suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) { continuation.resumeWith(Result.failure(e)) }
+                override fun onResponse(call: Call, response: Response) {
+                    continuation.resumeWith(runCatching { response.use {
+                        if (it.code == 401) throw SessionExpiredException()
+                        if (it.code != 200) throw IOException("Image preview unavailable")
+                        val body = it.body ?: throw IOException("Image preview unavailable")
+                        val type = body.contentType()?.let { mime -> "${mime.type}/${mime.subtype}" }
+                        require(type in setOf("image/png", "image/jpeg", "image/webp", "image/gif")) { "Image preview unavailable" }
+                        require(body.contentLength() <= 20 * 1024 * 1024) { "Image preview unavailable" }
+                        body.byteStream().use { input -> readAttachmentBytes(input) }
+                    } })
+                }
+            })
+        }
+    }
     suspend fun downloadAppUpdate(update: AppUpdate, directory: File, progress: (Int) -> Unit): File = withContext(Dispatchers.IO) {
         // Keep session headers on this configured host; update metadata cannot redirect downloads.
         http.newBuilder().followRedirects(false).followSslRedirects(false).callTimeout(15, TimeUnit.MINUTES).build()

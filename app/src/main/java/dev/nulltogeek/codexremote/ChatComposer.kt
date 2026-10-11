@@ -1,5 +1,8 @@
 package dev.nulltogeek.codexremote
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -15,11 +18,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable fun ChatComposer(state: ScreenState, vm: RemoteViewModel, onPick: (Array<String>) -> Unit) {
     var attachmentMenu by remember { mutableStateOf(false) }
@@ -69,15 +75,17 @@ import androidx.compose.ui.unit.dp
 }
 
 @Composable private fun AttachmentTile(file: Attachment, removable: Boolean, remove: () -> Unit) {
-    val bitmap by produceState<android.graphics.Bitmap?>(null, file.previewPath) {
-        if (file.previewPath.isNotEmpty()) value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            android.graphics.BitmapFactory.decodeFile(file.previewPath)
+    var showPreview by remember(file.id, file.previewPath) { mutableStateOf(false) }
+    val bitmap by produceState<Bitmap?>(null, file.previewPath) {
+        if (file.previewPath.isNotEmpty()) value = withContext(Dispatchers.IO) {
+            decodeImagePreview(file.previewPath, 256)
         }
     }
     Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
         Row(Modifier.width(256.dp).height(88.dp).padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             val preview = bitmap
-            if (preview != null) androidx.compose.foundation.Image(preview.asImageBitmap(), "Preview of ${file.name}", Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+            if (preview != null) Image(preview.asImageBitmap(), "Preview of ${file.name}",
+                Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)).clickable(onClickLabel = "Open image ${file.name}") { showPreview = true }, contentScale = ContentScale.Crop)
             else Icon(if (file.mimeType.startsWith("image/")) Icons.Outlined.Image else Icons.Outlined.InsertDriveFile, null, Modifier.size(40.dp))
             Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
@@ -95,5 +103,13 @@ import androidx.compose.ui.unit.dp
             }
             IconButton(onClick = remove, enabled = removable) { Icon(Icons.Outlined.Close, if (file.uploading) "Cancel upload ${file.name}" else "Remove ${file.name}", Modifier.size(18.dp)) }
         }
+    }
+    if (showPreview) {
+        var loading by remember(file.previewPath) { mutableStateOf(true) }
+        val fullPreview by produceState<Bitmap?>(null, file.previewPath) {
+            value = withContext(Dispatchers.IO) { decodeImagePreview(file.previewPath, 2048) }
+            loading = false
+        }
+        ImagePreviewDialog(file.name, fullPreview, loading) { showPreview = false }
     }
 }

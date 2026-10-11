@@ -24,7 +24,9 @@ data class Chat(val id: String, val title: String, val preview: String, val cwd:
     val status: String = "notLoaded", val archived: Boolean = false, val pinned: Boolean = false,
     val parentId: String? = null, val source: String = "", val updatedAt: Long = 0, val projectId: String? = null)
 data class TimelineItem(val id: String, val type: String, val text: String, val detail: String = "",
-    val status: String = "", val changes: List<Change> = emptyList())
+    val status: String = "", val changes: List<Change> = emptyList(), val turnId: String = "",
+    val phase: String = "", val turnStatus: String = "", val images: List<TimelineImage> = emptyList())
+data class TimelineImage(val source: String, val name: String = "Attached image")
 data class Change(val path: String, val diff: String)
 data class PendingInput(val id: String, val method: String, val params: JsonObject)
 data class ModelChoice(val id: String, val name: String, val efforts: List<String>, val defaultEffort: String)
@@ -92,11 +94,16 @@ fun parseChat(raw: JsonObject, archived: Boolean = false): Chat {
         (raw["updatedAt"] as? JsonPrimitive)?.longOrNull ?: 0, raw.text("projectId").ifEmpty { null })
 }
 
-fun parseItem(raw: JsonObject): TimelineItem {
+fun parseItem(raw: JsonObject, turnId: String = "", turnStatus: String = ""): TimelineItem {
     val type = raw.text("type"); var text = raw.text("text")
+    val images = if (type == "userMessage") raw.array("content").mapNotNull { value ->
+        val content = value as? JsonObject ?: return@mapNotNull null
+        val source = when (content.text("type")) { "localImage" -> content.text("path"); "image" -> content.text("url"); else -> "" }
+        source.takeIf { it.isNotBlank() }?.let { TimelineImage(it) }
+    } else emptyList()
     if (type == "userMessage") text = raw.array("content").mapNotNull { it as? JsonObject }.joinToString("\n") {
-        when (it.text("type")) { "text" -> it.text("text"); "image", "localImage" -> "[Image]"; else -> it.text("text") }
-    }
+        when (it.text("type")) { "text" -> it.text("text"); "image", "localImage" -> ""; else -> it.text("text") }
+    }.trim()
     if (type == "commandExecution") text = raw.text("aggregatedOutput").ifEmpty { raw.text("output") }
     if (type == "reasoning") text = raw.array("summary").joinToString("\n") { (it as? JsonPrimitive)?.contentOrNull ?: (it as? JsonObject)?.text("text").orEmpty() }
     val changes = raw.array("changes").mapNotNull { it as? JsonObject }.map { Change(it.text("path"), it.text("diff")) }
@@ -105,7 +112,8 @@ fun parseItem(raw: JsonObject): TimelineItem {
     if (type == "dynamicToolCall") text = listOf(raw.text("tool"), readableContent(raw["contentItems"])).filter { it.isNotBlank() }.joinToString("\n")
     if (type == "functionCallOutput") text = readableContent(raw["output"])
     if (text.isEmpty() && type !in listOf("agentMessage", "userMessage")) text = raw.text("status").ifEmpty { type }
-    return TimelineItem(raw.text("id"), type, text, raw.text("command").ifEmpty { raw.text("server").ifEmpty { raw.text("namespace").ifEmpty { raw.text("name") } } }, raw.text("status"), changes)
+    return TimelineItem(raw.text("id"), type, text, raw.text("command").ifEmpty { raw.text("server").ifEmpty { raw.text("namespace").ifEmpty { raw.text("name") } } }, raw.text("status"), changes,
+        turnId = turnId, phase = raw.text("phase"), turnStatus = turnStatus, images = images)
 }
 
 // Decode text content blocks without exposing base64 media as pages of JSON.
@@ -124,21 +132,36 @@ private fun readableContent(value: JsonElement?): String = when (value) {
 }
 
 fun parseTimeline(thread: JsonObject): List<TimelineItem> = thread.array("turns")
-    .mapNotNull { it as? JsonObject }.flatMap { turn ->
-        val items = turn.array("items").mapNotNull { it as? JsonObject }.map(::parseItem)
+    .mapNotNull { it as? JsonObject }.flatMapIndexed { index, turn ->
+        val turnId = turn.text("id").ifEmpty { "history-turn:$index" }
+        val status = turn.text("status", "completed")
+        val items = turn.array("items").mapNotNull { it as? JsonObject }.map { parseItem(it, turnId, status) }
         val error = turn.obj("error").text("message")
-        if (error.isEmpty()) items else items + TimelineItem("turn-error:${turn.text("id")}", "error", error, status = "failed")
+        val diff = turn.text("mobileFinalDiff")
+        items + (if (error.isEmpty()) emptyList() else listOf(TimelineItem("turn-error:${turn.text("id")}", "error", error, status = "failed", turnId = turnId, turnStatus = status))) +
+            (if (!turn.containsKey("mobileFinalDiff")) emptyList() else listOf(TimelineItem("turn-diff:$turnId", "turnDiff", "Final changes", changes = listOf(Change("All changes", diff)), turnId = turnId, turnStatus = status)))
     }
 
-fun reduceTimeline(items: List<TimelineItem>, method: String, params: JsonObject): List<TimelineItem> {
+fun reduceTimeline(items: List<TimelineItem>, method: String, params: JsonObject, activeTurnId: String = ""): List<TimelineItem> {
+    val turnId = params.text("turnId").ifEmpty { params.obj("turn").text("id") }.ifEmpty { activeTurnId }
+    if (method == "turn/completed") return items.map { if (it.turnId == turnId) it.copy(turnStatus = params.obj("turn").text("status", "completed")) else it }
+    if (method == "turn/diff/updated") {
+        if (turnId.isEmpty()) return items
+        val id = "turn-diff:$turnId"
+        val diff = params.text("diff")
+        val status = items.lastOrNull { it.turnId == turnId }?.turnStatus?.ifEmpty { "inProgress" } ?: "inProgress"
+        return items.filter { it.id != id } + TimelineItem(id, "turnDiff", "Final changes",
+            changes = listOf(Change("All changes", diff)), turnId = turnId, turnStatus = status)
+    }
     if (method == "item/started" || method == "item/completed") {
-        val item = parseItem(params.obj("item")); if (item.id.isEmpty()) return items
+        val previous = items.find { it.id == params.obj("item").text("id") }
+        val item = parseItem(params.obj("item"), turnId.ifEmpty { previous?.turnId.orEmpty() }, previous?.turnStatus ?: "inProgress"); if (item.id.isEmpty()) return items
         return if (items.any { it.id == item.id }) items.map { if (it.id == item.id) item else it } else items + item
     }
     val id = params.text("itemId"); if (id.isEmpty()) return items
     val delta = params.text("delta")
     if (method !in listOf("item/agentMessage/delta", "item/commandExecution/outputDelta", "item/reasoning/summaryTextDelta")) return items
     val index = items.indexOfFirst { it.id == id }
-    if (index < 0) return items + TimelineItem(id, if (method.contains("commandExecution")) "commandExecution" else if (method.contains("reasoning")) "reasoning" else "agentMessage", delta)
+    if (index < 0) return items + TimelineItem(id, if (method.contains("commandExecution")) "commandExecution" else if (method.contains("reasoning")) "reasoning" else "agentMessage", delta, turnId = turnId, turnStatus = "inProgress")
     return items.mapIndexed { i, item -> if (i == index) item.copy(text = item.text + delta) else item }
 }
