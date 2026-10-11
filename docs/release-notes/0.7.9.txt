@@ -1,0 +1,4 @@
+Chat rows are compact again, with no Restore/Delete action bar.
+Swipe right to archive a chat or restore an archived chat. Swipe left to delete an archived chat.
+Both actions ask for confirmation, and swipe directions stay the same in right-to-left layouts. Screen-reader actions are also available.
+Delete still requires an idle archived chat with no pending requests or queued messages, and an updated host bridge.
