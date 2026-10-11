@@ -26,7 +26,8 @@ internal fun canDeleteChat(state: ScreenState, chat: Chat): Boolean = chat.archi
 internal fun withoutDeletedChat(state: ScreenState, id: String): ScreenState {
     val selected = state.selectedChat?.id == id
     return state.copy(chats = state.chats.filterNot { it.id == id }, favoriteChats = state.favoriteChats.filterNot { it.id == id },
-        assignments = state.assignments - id, pending = state.pending.filterNot { it.params.text("threadId") == id },
+        assignments = state.assignments - id, catalogRevision = state.catalogRevision + 1,
+        activeCursor = null, archivedCursor = null, catalogError = null, catalogErrorArchived = null, pending = state.pending.filterNot { it.params.text("threadId") == id },
         selectedChat = if (selected) null else state.selectedChat, timeline = if (selected) emptyList() else state.timeline,
         diff = if (selected) null else state.diff, draft = if (selected) "" else state.draft,
         attachments = if (selected) emptyList() else state.attachments,

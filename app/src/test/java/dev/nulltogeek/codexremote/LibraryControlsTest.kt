@@ -30,12 +30,13 @@ class LibraryControlsTest {
         val other = chat.copy(id = "other")
         val state = ScreenState(chats = listOf(chat, other), favoriteChats = listOf(chat, other), selectedChat = chat,
             timeline = listOf(TimelineItem("i", "agentMessage", "answer")), draft = "draft", diff = Change("a", "diff"),
-            assignments = mapOf("c" to "p", "other" to "p"), historyRevision = 4)
+            assignments = mapOf("c" to "p", "other" to "p"), historyRevision = 4, catalogRevision = 7, activeCursor = "50", archivedCursor = "100")
         val deleted = withoutDeletedChat(state, "c")
         assertEquals(listOf(other), deleted.chats); assertEquals(listOf(other), deleted.favoriteChats)
         assertNull(deleted.selectedChat); assertNull(deleted.diff); assertTrue(deleted.timeline.isEmpty())
         assertEquals("", deleted.draft); assertEquals("archived", deleted.page); assertEquals(5, deleted.historyRevision)
         assertEquals(mapOf("other" to "p"), deleted.assignments)
+        assertEquals(8, deleted.catalogRevision); assertNull(deleted.activeCursor); assertNull(deleted.archivedCursor)
         assertEquals(state.timeline, withoutDeletedChat(state, "other").timeline)
     }
     @Test fun passwordValidationChecksMatchAndUtf8LimitWithoutTrimmingSpaces() {

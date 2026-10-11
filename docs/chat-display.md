@@ -58,3 +58,7 @@ Library navigation uses a sidebar opened with the toolbar menu button or an edge
 swipe. Chats, Archived, Projects and Settings have full-width labeled destinations.
 Selecting one closes the sidebar; Back closes an open sidebar first. Conversations
 and diffs keep their Back button, returning to the library section they came from.
+
+Deleting a chat invalidates old pagination requests and reloads the catalogue, so
+offset cursors cannot skip a conversation after the deleted row disappears.
+Deleted IDs also stay excluded from delayed events and saved cache updates.

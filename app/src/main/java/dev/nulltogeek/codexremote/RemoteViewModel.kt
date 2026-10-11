@@ -721,10 +721,16 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 throw IllegalStateException("Deletion could not be confirmed. Refresh archived history before trying again.")
             }
             forgetDeletedChat(chat.id)
+            try { refreshAll() }
+            catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (e is SessionExpiredException) throw e
+                mutable.update { it.copy(notice = "Chat deleted. Refresh history to continue loading chats.") }
+            }
         }
     }
     private fun forgetDeletedChat(id: String) {
-        deletedChats.add(id)
+        if (id.isBlank() || !deletedChats.add(id)) return
         mutable.update { withoutDeletedChat(it, id) }
         uncertainChats.remove(id); store.forgetChat(id)
         cachedThreads = JsonObject(cachedThreads.filterKeys { it != id })
@@ -738,7 +744,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             var state = before
             for (event in events) {
                 if (lastEpoch.isNotEmpty() && event.text("_bridgeEpoch").isNotEmpty() && event.text("_bridgeEpoch") != lastEpoch) continue
-                val method = event.text("method"); val p = event.obj("params"); val threadId = p.text("threadId")
+                val method = event.text("method"); val p = event.obj("params"); val threadId = p.text("threadId").ifEmpty { p.obj("thread").text("id") }
                 if (threadId in deletedChats) continue
                 val sequence = (event["_bridgeSequence"] as? JsonPrimitive)?.longOrNull ?: 0
                 state = state.copy(favoriteChats = state.favoriteChats.map { chat -> if (chat.id != threadId) chat else when (method) {
@@ -794,6 +800,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         completedChat?.takeIf { it == mutable.value.selectedChat?.id }?.let { id -> action { loadThread(id) } }
         events.filter { it.text("method") == "turn/completed" && it.obj("params").obj("turn").text("status") in listOf("failed", "interrupted") }
             .forEach { event -> pauseQueue(event.obj("params").text("threadId")) }
+        if (events.any { it.text("method") == "thread/deleted" && it.text("_bridgeEpoch") == lastEpoch } && canRefreshHistory(mutable.value)) refresh()
         if (events.any { it.text("method").startsWith("thread/") }) refreshFavoriteSummaries()
         if (events.any { it.text("method") == "project/changed" }) action { delay(100); val inventory = rpc.get("/v1/projects"); cachedInventory = inventory; applyInventory(inventory) }
     }
@@ -804,7 +811,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
         saveFavorites()
     }
-    private fun saveCache() { refreshFavoriteSummaries(); store.saveCache(buildJsonObject { put("threads", cachedThreads); put("chats", cachedList); put("inventory", cachedInventory) }) }
+    private fun saveCache() {
+        cachedList = JsonArray(cachedList.filterNot { it.jsonObject.text("id") in deletedChats })
+        cachedThreads = JsonObject(cachedThreads.filterKeys { it !in deletedChats })
+        refreshFavoriteSummaries(); store.saveCache(buildJsonObject { put("threads", cachedThreads); put("chats", cachedList); put("inventory", cachedInventory) }) }
     private fun action(block: suspend () -> Unit) = viewModelScope.launch(Dispatchers.IO) {
         mutable.update { it.copy(loading = true) }
         try { block() } catch (e: Exception) { if (e is CancellationException) throw e
