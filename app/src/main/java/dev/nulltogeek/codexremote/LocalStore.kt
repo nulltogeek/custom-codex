@@ -45,6 +45,16 @@ class LocalStore(private val context: Context) {
     fun theme(value: String) { prefs.edit { putString("theme", value) } }
     fun accent(value: String) { prefs.edit { putString("accent", value) } }
     fun motion(value: Boolean) { prefs.edit { putBoolean("motion", value) } }
+    fun queue(endpoint: String, username: String): QueueSnapshot = try {
+        parseQueue(WireJson.parseToJsonElement(prefs.getString("queue:" + favoriteKey(endpoint, username), "{}").orEmpty()).jsonObject)
+    } catch (_: Exception) { QueueSnapshot() }
+    // KTX edit returns Unit; the sender must check the durable commit result.
+    @android.annotation.SuppressLint("UseKtx")
+    fun queue(endpoint: String, username: String, snapshot: QueueSnapshot) {
+        val text = queueJson(snapshot).toString()
+        require(text.length <= 8 * 1024 * 1024) { "Queued attachments are too large. Send fewer files per queue." }
+        check(prefs.edit().putString("queue:" + favoriteKey(endpoint, username), text).commit()) { "Could not save the message queue" }
+    }
     private fun favoriteKey(endpoint: String, username: String): String = "favorites:" +
         java.security.MessageDigest.getInstance("SHA-256").digest((endpoint.trimEnd('/') + "\n" + username).toByteArray())
             .joinToString("") { "%02x".format(it) }

@@ -30,9 +30,12 @@ import kotlinx.coroutines.withContext
 @Composable fun ChatComposer(state: ScreenState, vm: RemoteViewModel, onPick: (Array<String>) -> Unit) {
     var attachmentMenu by remember { mutableStateOf(false) }
     val canAttach = state.connection == "Connected" && !state.uploading && !state.sending && state.selectedChat?.archived != true
+    val queueMessage = state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty() || state.queuedMessages.any { it.chatId == state.selectedChat?.id }
     Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
         Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 8.dp, vertical = 4.dp).testTag("chat-composer"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             ComposerOptions(state, vm)
+            MessageQueueView(state, edit = { message, text, attachments -> vm.editQueued(message.id, text, attachments) },
+                move = vm::moveQueued, remove = vm::removeQueued, pause = vm::pauseQueue, resume = vm::resumeQueue, retry = vm::retryQueued)
             if (state.attachments.isNotEmpty()) {
                 Text(attachmentSummary(state.attachments), style = MaterialTheme.typography.labelSmall,
                     color = if (state.attachments.any { it.uploadError.isNotEmpty() }) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
@@ -56,7 +59,7 @@ import kotlinx.coroutines.withContext
                         textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface), cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), maxLines = 5,
                         decorationBox = { input ->
                             Box {
-                                if (state.draft.isEmpty()) Text(if (state.selectedChat?.status == "active") "Guide the current work…" else if (state.chatMode == "chat") "Ask a question…" else "Message Codex…",
+                                if (state.draft.isEmpty()) Text(if (queueMessage) "Queue the next message…" else if (state.chatMode == "chat") "Ask a question…" else "Message Codex…",
                                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 input()
                             }
@@ -69,7 +72,7 @@ import kotlinx.coroutines.withContext
                         FilledIconButton(onClick = { vm.send() },
                             enabled = (state.draft.isNotBlank() || state.attachments.isNotEmpty()) && state.attachments.all { it.readyToSend } && canAttach && !state.uncertainSend,
                             modifier = Modifier.size(40.dp)) {
-                            if (state.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.AutoMirrored.Outlined.Send, "Send", Modifier.size(20.dp))
+                            if (state.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.AutoMirrored.Outlined.Send, if (queueMessage) "Queue message" else "Send", Modifier.size(20.dp))
                         }
                     }
                 }

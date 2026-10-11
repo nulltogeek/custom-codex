@@ -23,6 +23,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var updateJob: Job? = null
     private var olderJob: Job? = null
     private val catalogMutex = kotlinx.coroutines.sync.Mutex()
+    private val inputMutex = kotlinx.coroutines.sync.Mutex()
+    private val messageQueue = MessageQueue { endpoint, username, snapshot -> store.queue(endpoint, username, snapshot) }
+    @Volatile private var queueStorageBlocked = false
     private val uploadJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
     private var lastUpdateCheck = 0L
     @Volatile private var foreground = false
@@ -40,10 +43,25 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             mutable.update { it.copy(signedIn = token.isNotEmpty(), chats = cachedList.mapNotNull { r -> (r as? JsonObject)?.let { o -> parseChat(o, o.text("cachedArchived") == "true") } }) }
             applyInventory(cachedInventory)
             loadFavorites()
+            if (mutable.value.signedIn) loadQueue()
             connectIfForeground()
         }
         viewModelScope.launch {
             rpc.status.collect { status -> mutable.update { it.copy(connection = status) } }
+        }
+        viewModelScope.launch {
+            messageQueue.state.collect { queue -> mutable.update { it.copy(queuedMessages = queue.messages, pausedQueues = queue.pausedChats) } }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                delay(1500)
+                try { dispatchQueuedMessages() }
+                catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    queueStorageBlocked = true
+                    mutable.update { it.copy(queueBlocked = true, notice = "Queue paused: ${e.message}. Tap Resume queue after fixing the problem.") }
+                }
+            }
         }
         // Actor processes notifications off the main thread in short batches.
         viewModelScope.launch(Dispatchers.Default) {
@@ -95,12 +113,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         mutable.update { it.copy(endpoint = cleaned, username = session.username, signedIn = true, host = host.text("name"),
             passwordChangeAvailable = host.obj("capabilities")["passwordChange"]?.jsonPrimitive?.booleanOrNull == true, notice = null) }
         loadFavorites()
+        loadQueue()
         connectIfForeground()
     }
     private fun clearSession(notice: String? = null) {
         updateJob?.cancel(); olderJob?.cancel()
         synchronized(uploadJobs) { uploadJobs.values.forEach { it.cancel() }; uploadJobs.clear() }
-        rpc.close(); store.signOut()
+        messageQueue.detach(); rpc.close(); store.signOut()
         mutable.update { ScreenState(endpoint = store.endpoint, username = store.username, theme = it.theme, accent = it.accent, motion = it.motion, notice = notice) }
     }
     fun signOut() = action {
@@ -403,13 +422,17 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val state = mutable.value; val chat = state.selectedChat ?: return
         if ((state.draft.isBlank() && state.attachments.isEmpty()) || state.attachments.any { !it.readyToSend } || state.uploading || state.sending || state.uncertainSend || state.connection != "Connected" || chat.archived) return
         val text = state.draft
-        mutable.update { it.copy(sending = true, notice = null, writerConflict = false) }
+        if (chat.status == "active" || state.activeTurnId.isNotEmpty() || messageQueue.state.value.messages.any { it.chatId == chat.id }) {
+            try { enqueueDraft(state) } catch (e: Exception) { mutable.update { it.copy(notice = e.message) } }
+            return
+        }
+        if (!mutable.compareAndSet(state, state.copy(sending = true, notice = null, writerConflict = false))) return
         viewModelScope.launch(Dispatchers.IO) {
+            inputMutex.withLock {
             var mutationAttempted = false
             var acknowledged = false
             try {
-                val input = buildJsonArray { if (text.isNotBlank()) add(buildJsonObject { put("type", "text"); put("text", text) }); state.attachments.forEach { add(it.input) } }
-                submitThreadInput(state, input, rpc::call) { mutationAttempted = true }
+                submitQueuedMessage(queuedDraft(state), rpc::call, allowFailedTurn = true) { mutationAttempted = true }
                 acknowledged = true
                 uncertainChats.remove(chat.id)
                 val cleared = store.clearSentDraft(chat.id, text)
@@ -419,6 +442,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 loadThread(chat.id)
             } catch (e: Exception) {
                 if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                if (e is QueueWaitingException) {
+                    try { enqueueDraft(state) } catch (saveError: Exception) { mutable.update { it.copy(notice = saveError.message) } }
+                    mutable.update { it.copy(sending = false) }
+                    return@withLock
+                }
                 val uncertain = uncertainDelivery(mutationAttempted, acknowledged, e)
                 if (uncertain) uncertainChats.add(chat.id)
                 mutable.update { if (it.selectedChat?.id != chat.id) it.copy(sending = false) else it.copy(sending = false, uncertainSend = uncertain, writerConflict = !acknowledged && writerConflict(e),
@@ -426,6 +454,73 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     else (e.message ?: "Send failed") + if (uncertain) ". Refresh and check history before sending again." else "") }
                 if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
             }
+            }
+        }
+    }
+    private fun queuedDraft(state: ScreenState) = QueuedMessage(java.util.UUID.randomUUID().toString(), requireNotNull(state.selectedChat).id,
+        state.draft, state.attachments, state.chatMode, state.accessMode, state.selectedModel, state.selectedEffort)
+    private fun enqueueDraft(snapshot: ScreenState) {
+        val chatId = requireNotNull(snapshot.selectedChat).id
+        messageQueue.add(queuedDraft(snapshot))
+        val cleared = store.clearSentDraft(chatId, snapshot.draft)
+        val attachmentIds = snapshot.attachments.map { it.id }.toSet()
+        store.attachments(chatId, store.attachments(chatId).filter { it.id !in attachmentIds })
+        mutable.update { if (it.selectedChat?.id != chatId) it else it.copy(draft = if (cleared && it.draft == snapshot.draft) "" else it.draft,
+            attachments = it.attachments.filter { a -> a.id !in attachmentIds }, notice = null) }
+    }
+    private fun loadQueue() {
+        val current = mutable.value
+        queueStorageBlocked = false
+        mutable.update { it.copy(queueBlocked = false) }
+        messageQueue.restore(current.endpoint, current.username, store.queue(current.endpoint, current.username))
+    }
+    private fun queueAction(block: () -> Unit) {
+        try { block() } catch (e: Exception) {
+            queueStorageBlocked = true
+            mutable.update { it.copy(queueBlocked = true, notice = e.message ?: "Could not update the queue") }
+        }
+    }
+    fun editQueued(id: String, text: String, attachments: List<Attachment>) = queueAction { messageQueue.edit(id, text, attachments) }
+    fun moveQueued(id: String, offset: Int) = queueAction { messageQueue.move(id, offset) }
+    fun removeQueued(id: String) = queueAction { messageQueue.remove(id) }
+    fun retryQueued(id: String) = queueAction { messageQueue.retry(id) }
+    fun pauseQueue(chatId: String) = queueAction { messageQueue.pause(chatId) }
+    fun resumeQueue(chatId: String) = queueAction { messageQueue.resume(chatId); queueStorageBlocked = false; mutable.update { it.copy(queueBlocked = false) } }
+    private suspend fun dispatchQueuedMessages() = inputMutex.withLock {
+        val initial = mutable.value
+        if (!foreground || queueStorageBlocked || !initial.signedIn || initial.connection != "Connected" || initial.sending) return@withLock
+        val candidates = messageQueue.state.value.messages.distinctBy { it.chatId }
+            .filter { it.delivery == "queued" && it.chatId !in messageQueue.state.value.pausedChats }
+        for (candidate in candidates) {
+            var ticket: QueueTicket? = null
+            var sendClaimed = false
+            var attempted = false
+            var acknowledged = false
+            try {
+                submitQueuedMessage(candidate, rpc::call, allowFailedTurn = candidate.chatId in messageQueue.state.value.resumedChats) {
+                    val current = mutable.value
+                    if (!foreground || !current.signedIn || current.connection != "Connected" || current.sending ||
+                        current.endpoint != initial.endpoint || current.username != initial.username ||
+                        !mutable.compareAndSet(current, current.copy(sending = true))) throw QueueWaitingException()
+                    sendClaimed = true
+                    ticket = messageQueue.claim(candidate) ?: throw QueueWaitingException()
+                    attempted = true
+                }
+                acknowledged = true
+                messageQueue.complete(requireNotNull(ticket))
+                if (mutable.value.selectedChat?.id == candidate.chatId) loadThread(candidate.chatId)
+                break
+            } catch (e: Exception) {
+                if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                if (e is QueueWaitingException) continue
+                if (initial.endpoint == mutable.value.endpoint && initial.username == mutable.value.username) {
+                    val uncertain = acknowledged || uncertainDelivery(attempted, acknowledged, e)
+                    val error = if (uncertain) "Check chat history before retrying: delivery could not be confirmed." else e.message ?: "Queued send failed"
+                    ticket?.let { messageQueue.fail(it, error, uncertain) } ?: messageQueue.reject(candidate, error)
+                    mutable.update { it.copy(notice = "Queued message paused: $error") }
+                }
+                if (e is SessionExpiredException) { disconnect(); clearSession(e.message); break }
+            } finally { if (sendClaimed) mutable.update { it.copy(sending = false) } }
         }
     }
     fun continueInNewChat() {
@@ -547,14 +642,18 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             uploadJobs[id] = job; job.start()
         }
     }
-    fun interrupt() = action {
-        val id = mutable.value.selectedChat?.id ?: return@action
-        val turnId = mutable.value.activeTurnId.ifEmpty {
+    fun interrupt() {
+        val initial = mutable.value
+        val id = initial.selectedChat?.id ?: return
+        pauseQueue(id)
+        action {
+        val turnId = initial.activeTurnId.ifEmpty {
             rpc.call("thread/read", buildJsonObject { put("threadId", id); put("includeTurns", true) }).obj("thread").array("turns")
                 .mapNotNull { it as? JsonObject }.lastOrNull { it.text("status") == "inProgress" }?.text("id")
                 ?: throw IllegalStateException("Refresh to load the active turn before stopping it")
         }
         rpc.call("turn/interrupt", jsonObject("threadId" to id, "turnId" to turnId))
+        }
     }
     fun answer(request: PendingInput, result: JsonObject) = action {
         rpc.call("bridge/respond", buildJsonObject { put("requestId", request.id); put("result", result) })
@@ -628,6 +727,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             state
         }
         completedChat?.takeIf { it == mutable.value.selectedChat?.id }?.let { id -> action { loadThread(id) } }
+        events.filter { it.text("method") == "turn/completed" && it.obj("params").obj("turn").text("status") in listOf("failed", "interrupted") }
+            .forEach { event -> pauseQueue(event.obj("params").text("threadId")) }
         if (events.any { it.text("method").startsWith("thread/") }) refreshFavoriteSummaries()
         if (events.any { it.text("method") == "project/changed" }) action { delay(100); val inventory = rpc.get("/v1/projects"); cachedInventory = inventory; applyInventory(inventory) }
     }
