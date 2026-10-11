@@ -14,7 +14,7 @@ function settings() {
   const home = mkdtempSync(join(tmpdir(), 'codex-standalone-'));
   writeFileSync(join(home, 'config.toml'), 'model = "fixture"\n', { mode: 0o600 });
   return { backendPath: process.execPath, backendArgs: [fixture], backendVersion: 'fixture',
-    codexHome: home, accountFile: join(home, 'account.json'), initialLoginFile: join(home, 'initial-login.json'), port: 0 };
+    codexHome: home, accountFile: join(home, 'account.json'), initialLoginFile: join(home, 'initial-login.json'), port: 0, bindAddress: '127.0.0.1' };
 }
 async function login(runtime, base = `http://127.0.0.1:${runtime.port}`) {
   const response = await fetch(base + '/v1/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
