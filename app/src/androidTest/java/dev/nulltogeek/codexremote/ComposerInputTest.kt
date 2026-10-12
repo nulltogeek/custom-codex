@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import org.junit.Assert.*
@@ -23,7 +24,32 @@ class ComposerInputTest {
         input.performClick().performKeyInput { pressKey(Key.Enter) }
         compose.runOnIdle { assertEquals(1, sends); assertEquals("Hello", draft.value) }
         input.performKeyInput { keyDown(Key.ShiftLeft); pressKey(Key.Enter); keyUp(Key.ShiftLeft) }
-        compose.runOnIdle { assertEquals(1, sends); assertTrue(draft.value.contains('\n')) }
+        compose.runOnIdle { assertEquals(1, sends); assertEquals("Hello\n", draft.value) }
+    }
+    @Test fun shiftEnterInsertsAtCursorAndReplacesSelectionWithoutSending() {
+        val draft = mutableStateOf("FirstSecond"); var sends = 0
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { MessageDraftInput(draft.value, { draft.value = it }, { sends++ }, true, "Message", Modifier.fillMaxWidth()) }
+        } }
+        val input = compose.onNodeWithContentDescription("Message input")
+        input.performClick().performTextInputSelection(TextRange(5))
+        input.performKeyInput { keyDown(Key.ShiftLeft); pressKey(Key.Enter); keyUp(Key.ShiftLeft) }
+        compose.runOnIdle { assertEquals("First\nSecond", draft.value); assertEquals(0, sends) }
+        input.performTextInput("Next")
+        compose.runOnIdle { assertEquals("First\nNextSecond", draft.value) }
+        input.performTextInputSelection(TextRange(6, 10))
+        input.performKeyInput { keyDown(Key.ShiftRight); pressKey(Key.NumPadEnter); keyUp(Key.ShiftRight) }
+        compose.runOnIdle { assertEquals("First\n\nSecond", draft.value); assertEquals(0, sends) }
+    }
+    @Test fun shiftEnterStillEditsWhenSendingIsBlocked() {
+        val draft = mutableStateOf("Offline draft"); var sends = 0
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("light", motion = false) { MessageDraftInput(draft.value, { draft.value = it }, { sends++ }, false, "Message", Modifier.fillMaxWidth()) }
+        } }
+        compose.onNodeWithContentDescription("Message input").performClick().performKeyInput {
+            keyDown(Key.ShiftLeft); pressKey(Key.Enter); keyUp(Key.ShiftLeft)
+        }
+        compose.runOnIdle { assertEquals("Offline draft\n", draft.value); assertEquals(0, sends) }
     }
     @Test fun softwareKeyboardSendAndNumpadEnterUseTheSameSendAction() {
         var sends = 0

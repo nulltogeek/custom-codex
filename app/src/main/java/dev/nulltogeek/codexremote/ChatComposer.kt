@@ -26,6 +26,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -82,12 +84,18 @@ import kotlinx.coroutines.withContext
 
 @Composable internal fun MessageDraftInput(draft: String, onChange: (String) -> Unit, onSend: () -> Unit,
     canSend: Boolean, placeholder: String, modifier: Modifier = Modifier) {
-    BasicTextField(draft, onChange, modifier = modifier.heightIn(min = 48.dp, max = 144.dp).padding(vertical = 14.dp)
+    var field by remember { mutableStateOf(TextFieldValue(draft, TextRange(draft.length))) }
+    val value = if (field.text == draft) field else field.copy(text = draft, composition = null)
+    SideEffect { if (field != value) field = value }
+    fun updateField(next: TextFieldValue) { field = next; if (next.text != draft) onChange(next.text) }
+    BasicTextField(value, ::updateField, modifier = modifier.heightIn(min = 48.dp, max = 144.dp).padding(vertical = 14.dp)
         .semantics { contentDescription = "Message input" }.onPreviewKeyEvent { event ->
-            val sendKey = event.key in listOf(Key.Enter, Key.NumPadEnter) && !event.isShiftPressed &&
+            val enterKey = event.key in listOf(Key.Enter, Key.NumPadEnter) &&
                 !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed
-            if (sendKey) {
-                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0 && canSend) onSend()
+            if (enterKey) {
+                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
+                    if (event.isShiftPressed) updateField(insertDraftLineBreak(value)) else if (canSend) onSend()
+                }
                 true
             } else false
         }, textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
@@ -99,6 +107,12 @@ import kotlinx.coroutines.withContext
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             input()
         } })
+}
+
+internal fun insertDraftLineBreak(value: TextFieldValue): TextFieldValue {
+    val start = value.selection.min
+    return value.copy(text = value.text.replaceRange(start, value.selection.max, "\n"),
+        selection = TextRange(start + 1), composition = null)
 }
 
 @Composable private fun AttachmentTile(file: Attachment, removable: Boolean, remove: () -> Unit) {

@@ -26,7 +26,9 @@ are recognized. Highlighting is lexical rather than a full grammar parser;
 unknown fence languages are shown as plain code.
 
 In the composer, **Enter** or **Numpad Enter** sends once. **Shift+Enter** inserts a
-new line. The software keyboard requests the **Send** action. Pasted multiline
-text remains a draft. All input actions use the same send callback and readiness
+new line at the cursor, replacing selected text if any. Shift+Numpad Enter does
+the same. Newline insertion is handled explicitly and stays available while Send
+is disabled. The software keyboard requests the **Send** action. Pasted multiline
+text remains a draft. All send actions use the same send callback and readiness
 checks as the Send button, including connection, uploads and uncertain delivery.
 If work is already running, Enter queues the message just like the Send button.
