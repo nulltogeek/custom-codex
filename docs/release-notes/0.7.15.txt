@@ -1,0 +1,2 @@
+Shift+Enter explicitly inserts a new line at the cursor. Selected text is replaced by the new line, and Shift+Numpad Enter works too.
+Enter still sends; Shift+Enter remains available while sending is disabled.
