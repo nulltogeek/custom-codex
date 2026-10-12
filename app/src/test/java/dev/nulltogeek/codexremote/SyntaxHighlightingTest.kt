@@ -5,6 +5,27 @@ import org.junit.Test
 
 class SyntaxHighlightingTest {
     private fun tokens(code: String, language: String) = syntaxTokens(code, language).map { code.substring(it.start, it.end) to it.kind }
+    @Test fun bracedShellVariablesRemainSingleTokensForEveryShellAlias() {
+        val code = "echo \${HOME} \${name:-fallback} \$HOME \$? \$1 # comment"
+        for (language in listOf("shell", "sh", "bash", "zsh", "terminal")) {
+            assertEquals(listOf("\${HOME}", "\${name:-fallback}", "\$HOME", "\$?", "\$1"),
+                tokens(code, language).filter { it.second == SyntaxKind.Variable }.map { it.first })
+        }
+    }
+    @Test fun invalidHighlightingRulesReturnNoPatternInsteadOfThrowing() {
+        assertNull(compileSyntaxPattern("(?<broken>"))
+        assertNull(compileSyntaxPattern("[unterminated"))
+        assertNotNull(compileSyntaxPattern(syntaxPattern("shell")))
+    }
+    @Test fun allLanguageRulesCompileAndProduceOrderedSpans() {
+        for (name in listOf("kotlin", "python", "javascript", "typescript", "shell", "sql", "json", "yaml", "css",
+            "rust", "go", "java", "c", "cpp", "csharp", "ruby", "swift", "html")) {
+            Regex(syntaxPattern(name))
+            val spans = syntaxTokens("create(42) \"quoted\"", name)
+            assertTrue("No styles for $name", spans.isNotEmpty())
+            assertTrue(spans.zipWithNext().all { (a, b) -> a.end <= b.start })
+        }
+    }
     @Test fun stringsAndCommentsProtectUrlsAndKeywordsFromOtherStyles() {
         val code = "const url = \"https://example.com/#if\"; // return 42\nfetch(url)"
         val tokens = tokens(code, "js")

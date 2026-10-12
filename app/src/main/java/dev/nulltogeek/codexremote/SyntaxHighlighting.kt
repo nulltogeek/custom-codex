@@ -41,23 +41,7 @@ fun syntaxTokens(code: String, language: String): List<SyntaxToken> {
         kind?.let { SyntaxToken(line.range.first, line.range.last + 1, it) }
     }.toList()
     if (name !in keywords && name != "html") return emptyList()
-    val comments = when (name) {
-        "python", "ruby", "yaml" -> "#[^\\n]*"
-        "shell" -> "(?<!\\S)#[^\\n]*"
-        "sql" -> "--[^\\n]*|/\\*[\\s\\S]*?(?:\\*/|$)"
-        "html" -> "<!--[\\s\\S]*?(?:-->|$)"
-        "css" -> "/\\*[\\s\\S]*?(?:\\*/|$)"
-        "json" -> "(?!)"
-        else -> "//[^\\n]*|/\\*[\\s\\S]*?(?:\\*/|$)"
-    }
-    val tripleStrings = if (name == "python") "\"\"\"[\\s\\S]*?(?:\"\"\"|$)|'''[\\s\\S]*?(?:'''|$)|" else ""
-    val strings = tripleStrings + "\"(?:\\\\.|[^\"\\\\])*?(?:\"|$)|'(?:\\\\.|''|[^'\\\\])*?(?:'|$)" +
-        if (name in listOf("javascript", "typescript", "shell")) "|`(?:\\\\.|[^`\\\\])*?(?:`|$)" else ""
-    val variable = if (name == "shell") "\\$\\{[^}]*}|\\$[A-Za-z_][\\w]*|\\$[0-9?#@!]" else "(?!)"
-    val tag = if (name == "html") "</?[A-Za-z][\\w:-]*|/?>" else "(?!)"
-    val color = if (name == "css") "#[0-9a-fA-F]{3,8}\\b" else "(?!)"
-    val word = if (name in listOf("css", "yaml", "html")) "[A-Za-z_][\\w-]*" else "[A-Za-z_][\\w]*"
-    val pattern = Regex("(?<comment>$comments)|(?<string>$strings)|(?<variable>$variable)|(?<tag>$tag)|(?<color>$color)|(?<number>\\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?)(?:[uUlLfF]+)?\\b)|(?<word>$word)|(?<operator>[+*/%=!<>|&^~?:-]+)")
+    val pattern = compileSyntaxPattern(syntaxPattern(name)) ?: return emptyList()
     val words = keywords[name].orEmpty()
     return pattern.findAll(code).mapNotNull { match ->
         var after = match.range.last + 1
@@ -79,3 +63,28 @@ fun syntaxTokens(code: String, language: String): List<SyntaxToken> {
         kind?.let { SyntaxToken(match.range.first, match.range.last + 1, it) }
     }.toList()
 }
+
+/** ICU on Android requires literal closing braces to be escaped. */
+internal fun syntaxPattern(name: String): String {
+    val comments = when (name) {
+        "python", "ruby", "yaml" -> "#[^\\n]*"
+        "shell" -> "(?<!\\S)#[^\\n]*"
+        "sql" -> "--[^\\n]*|/\\*[\\s\\S]*?(?:\\*/|$)"
+        "html" -> "<!--[\\s\\S]*?(?:-->|$)"
+        "css" -> "/\\*[\\s\\S]*?(?:\\*/|$)"
+        "json" -> "(?!)"
+        else -> "//[^\\n]*|/\\*[\\s\\S]*?(?:\\*/|$)"
+    }
+    val tripleStrings = if (name == "python") "\"\"\"[\\s\\S]*?(?:\"\"\"|$)|'''[\\s\\S]*?(?:'''|$)|" else ""
+    val strings = tripleStrings + "\"(?:\\\\.|[^\"\\\\])*?(?:\"|$)|'(?:\\\\.|''|[^'\\\\])*?(?:'|$)" +
+        if (name in listOf("javascript", "typescript", "shell")) "|`(?:\\\\.|[^`\\\\])*?(?:`|$)" else ""
+    val variable = if (name == "shell") "\\$\\{[^}]*\\}|\\$[A-Za-z_][\\w]*|\\$[0-9?#@!]" else "(?!)"
+    val tag = if (name == "html") "</?[A-Za-z][\\w:-]*|/?>" else "(?!)"
+    val color = if (name == "css") "#[0-9a-fA-F]{3,8}\\b" else "(?!)"
+    val word = if (name in listOf("css", "yaml", "html")) "[A-Za-z_][\\w-]*" else "[A-Za-z_][\\w]*"
+    return "(?<comment>$comments)|(?<string>$strings)|(?<variable>$variable)|(?<tag>$tag)|(?<color>$color)|(?<number>\\b(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?)(?:[uUlLfF]+)?\\b)|(?<word>$word)|(?<operator>[+*/%=!<>|&^~?:-]+)"
+}
+
+/** Highlighting is optional: unsupported patterns must leave readable plain code. */
+internal fun compileSyntaxPattern(pattern: String): Regex? = try { Regex(pattern) }
+catch (_: java.util.regex.PatternSyntaxException) { null }

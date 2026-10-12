@@ -24,6 +24,10 @@ JSON, YAML, CSS, HTML/XML, Rust, Go, Java, C, C++, C#, Ruby, Swift and diff.
 Common fence aliases such as `kt`, `py`, `js`, `ts`, `bash`, `sh`, `yml` and `patch`
 are recognized. Highlighting is lexical rather than a full grammar parser;
 unknown fence languages are shown as plain code.
+Shell expansion patterns escape literal braces for Android's ICU regex engine.
+If a highlighting rule cannot compile, the code stays readable without colors
+instead of closing the chat. `scripts/verify-syntax-icu.py` checks the built rules
+against native ICU, since desktop Java accepts some patterns Android rejects.
 
 In the composer, **Enter** or **Numpad Enter** sends once. **Shift+Enter** inserts a
 new line at the cursor, replacing selected text if any. Shift+Numpad Enter does
