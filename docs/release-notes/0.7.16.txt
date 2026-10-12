@@ -1,0 +1,2 @@
+Fixes an Android crash when displaying shell commands or shell code blocks.
+Shell variable highlighting now uses an Android-compatible pattern. Invalid highlighting patterns fall back to readable plain code instead of closing the chat.
