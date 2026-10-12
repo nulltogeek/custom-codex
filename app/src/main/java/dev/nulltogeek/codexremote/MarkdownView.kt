@@ -17,6 +17,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.*
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -68,14 +70,30 @@ import androidx.compose.ui.unit.sp
     val shown = if (!collapsible || expanded) code.take(limit) else ""
     val clipboard = LocalClipboardManager.current
     var copied by remember(code) { mutableStateOf(false) }
-    val foreground = MaterialTheme.colorScheme.onSurface; val primary = MaterialTheme.colorScheme.primary
-    val secondary = MaterialTheme.colorScheme.secondary; val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    val highlighted = remember(shown, foreground, primary, secondary, muted) {
+    val colors = MaterialTheme.colorScheme
+    val dark = colors.surface.luminance() < 0.5f
+    val palette = mapOf(
+        SyntaxKind.Keyword to if (dark) Color(0xFFC4B5FD) else Color(0xFF6D28D9),
+        SyntaxKind.String to if (dark) Color(0xFF86EFAC) else Color(0xFF176C3D),
+        SyntaxKind.Number to if (dark) Color(0xFFFCD34D) else Color(0xFF925400),
+        SyntaxKind.Function to if (dark) Color(0xFF7DD3FC) else Color(0xFF075985),
+        SyntaxKind.Type to if (dark) Color(0xFFFDBA74) else Color(0xFF9A3412),
+        SyntaxKind.Property to if (dark) Color(0xFF67E8F9) else Color(0xFF0E6675),
+        SyntaxKind.Variable to if (dark) Color(0xFFF9A8D4) else Color(0xFF9D174D),
+        SyntaxKind.Tag to if (dark) Color(0xFFF9A8D4) else Color(0xFF9D174D),
+        SyntaxKind.Comment to colors.onSurfaceVariant,
+        SyntaxKind.Operator to colors.onSurface,
+        SyntaxKind.Added to colors.secondary,
+        SyntaxKind.Removed to colors.error,
+        SyntaxKind.Heading to colors.primary
+    )
+    val highlighted = remember(shown, language, palette) {
         buildAnnotatedString {
             append(shown.ifEmpty { " " })
-            Regex("(?m)(//[^\\n]*|#[^\\n]*|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|\\b(?:fun|val|var|class|import|from|def|return|if|else|for|while|const|let|function|public|private|true|false|null|None|async|await)\\b|\\b\\d+(?:\\.\\d+)?\\b)").findAll(shown).forEach { token ->
-                val color = when { token.value.startsWith("//") || token.value.startsWith('#') -> muted; token.value.startsWith('"') || token.value.startsWith('\'') -> secondary; else -> primary }
-                addStyle(SpanStyle(color = color), token.range.first, token.range.last + 1)
+            syntaxTokens(shown, language).forEach { token ->
+                addStyle(SpanStyle(color = palette.getValue(token.kind),
+                    fontWeight = if (token.kind == SyntaxKind.Keyword || token.kind == SyntaxKind.Heading) FontWeight.SemiBold else FontWeight.Normal,
+                    fontStyle = if (token.kind == SyntaxKind.Comment) FontStyle.Italic else FontStyle.Normal), token.start, token.end)
             }
         }
     }
@@ -89,7 +107,7 @@ import androidx.compose.ui.unit.sp
                 TextButton(onClick = { clipboard.setText(AnnotatedString(code)); copied = true }) { Icon(Icons.Outlined.ContentCopy, null, Modifier.size(14.dp)); Spacer(Modifier.width(6.dp)); Text(if (copied) "Copied" else "Copy code") }
             }
             if (!collapsible || expanded) {
-                SelectionContainer { Text(highlighted, Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(14.dp), fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 20.sp, softWrap = false) }
+                SelectionContainer { Text(highlighted, Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(14.dp), fontFamily = FontFamily.Monospace, fontSize = 14.sp, lineHeight = 22.sp, softWrap = false) }
                 if (code.length > limit) TextButton(onClick = { limit += 6000 }) { Text("Show more output") }
             }
 
