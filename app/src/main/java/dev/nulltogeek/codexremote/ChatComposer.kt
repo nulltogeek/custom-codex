@@ -8,6 +8,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.*
@@ -23,6 +25,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,6 +34,7 @@ import kotlinx.coroutines.withContext
 @Composable fun ChatComposer(state: ScreenState, vm: RemoteViewModel, onPick: (Array<String>) -> Unit) {
     var attachmentMenu by remember { mutableStateOf(false) }
     val canAttach = state.connection == "Connected" && !state.uploading && !state.sending && state.selectedChat?.archived != true
+    val canSend = (state.draft.isNotBlank() || state.attachments.isNotEmpty()) && state.attachments.all { it.readyToSend } && canAttach && !state.uncertainSend
     val queueMessage = state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty() || state.queuedMessages.any { it.chatId == state.selectedChat?.id }
     Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
         Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 8.dp, vertical = 4.dp).testTag("chat-composer"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -55,22 +60,16 @@ import kotlinx.coroutines.withContext
                             DropdownMenuItem(text = { Text("File") }, leadingIcon = { Icon(Icons.Outlined.InsertDriveFile, null) }, onClick = { attachmentMenu = false; onPick(arrayOf("*/*")) })
                         }
                     }
-                    BasicTextField(state.draft, vm::draft, modifier = Modifier.weight(1f).heightIn(min = 48.dp, max = 144.dp).padding(vertical = 14.dp).semantics { contentDescription = "Message input" },
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface), cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), maxLines = 5,
-                        decorationBox = { input ->
-                            Box {
-                                if (state.draft.isEmpty()) Text(if (queueMessage) "Queue the next message…" else if (state.chatMode == "chat") "Ask a question…" else "Message Codex…",
-                                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                input()
-                            }
-                        })
+                    MessageDraftInput(state.draft, vm::draft, vm::send, canSend,
+                        if (queueMessage) "Queue the next message…" else if (state.chatMode == "chat") "Ask a question…" else "Message Codex…",
+                        Modifier.weight(1f))
                     if (state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty()) IconButton(
                         onClick = { vm.interrupt() }, enabled = state.connection == "Connected" && !state.loading,
                         modifier = Modifier.size(48.dp).testTag("stop-work")
                     ) { Icon(Icons.Outlined.Stop, "Stop", Modifier.size(24.dp), tint = MaterialTheme.colorScheme.error) }
                     Box(Modifier.size(48.dp).testTag("send-message"), contentAlignment = Alignment.Center) {
                         FilledIconButton(onClick = { vm.send() },
-                            enabled = (state.draft.isNotBlank() || state.attachments.isNotEmpty()) && state.attachments.all { it.readyToSend } && canAttach && !state.uncertainSend,
+                            enabled = canSend,
                             modifier = Modifier.size(40.dp)) {
                             if (state.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.AutoMirrored.Outlined.Send, if (queueMessage) "Queue message" else "Send", Modifier.size(20.dp))
                         }
@@ -79,6 +78,27 @@ import kotlinx.coroutines.withContext
             }
         }
     }
+}
+
+@Composable internal fun MessageDraftInput(draft: String, onChange: (String) -> Unit, onSend: () -> Unit,
+    canSend: Boolean, placeholder: String, modifier: Modifier = Modifier) {
+    BasicTextField(draft, onChange, modifier = modifier.heightIn(min = 48.dp, max = 144.dp).padding(vertical = 14.dp)
+        .semantics { contentDescription = "Message input" }.onPreviewKeyEvent { event ->
+            val sendKey = event.key in listOf(Key.Enter, Key.NumPadEnter) && !event.isShiftPressed &&
+                !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed
+            if (sendKey) {
+                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0 && canSend) onSend()
+                true
+            } else false
+        }, textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary), maxLines = 5,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+        keyboardActions = KeyboardActions(onSend = { if (canSend) onSend() }),
+        decorationBox = { input -> Box {
+            if (draft.isEmpty()) Text(placeholder, style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            input()
+        } })
 }
 
 @Composable private fun AttachmentTile(file: Attachment, removable: Boolean, remove: () -> Unit) {
