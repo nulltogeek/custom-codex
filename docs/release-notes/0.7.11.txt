@@ -1,0 +1,4 @@
+Code highlighting now uses more colors and language-aware styles for keywords, strings, comments, numbers, functions, types, properties, variables and tags. Dark and light palettes adapt to your theme, with added diff highlighting.
+Responses have larger text, more line spacing, clearer headings, indented lists, task indicators, quote callouts and aligned tables that scroll horizontally.
+Enter sends a message; Shift+Enter adds a new line. Numpad Enter and the software keyboard Send action work too. While a task runs, Enter queues the message just like the Send button.
+Pasted multiline text stays in your draft, and sending respects connection, upload and delivery checks.
