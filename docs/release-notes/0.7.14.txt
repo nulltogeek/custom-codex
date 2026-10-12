@@ -1,0 +1,4 @@
+Edit sent messages with the pencil beside Copy, then choose Save & resend.
+Your revised message continues in a new chat from before that exchange, while your original chat stays available.
+Keep or remove original attachments. If a task is running, stop it from the editor before resending.
+Earlier replies are regenerated; existing changes on your computer are not undone.
