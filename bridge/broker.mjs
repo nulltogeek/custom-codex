@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { posix } from 'node:path';
 import { mobileOptions } from './mobile-options.mjs';
 
 export const HUMAN_REQUESTS = new Set([
@@ -10,7 +11,7 @@ const PHONE_METHODS = new Set([
   'thread/list', 'thread/read', 'thread/loaded/list', 'thread/turns/list',
   'thread/items/list', 'thread/start', 'thread/resume', 'thread/fork',
   'thread/name/set', 'thread/archive', 'thread/unarchive', 'thread/delete', 'thread/metadata/update',
-  'project/update',
+  'project/update', 'project/create',
   'turn/start', 'turn/steer', 'turn/interrupt', 'model/list',
   'account/read', 'account/rateLimits/read', 'review/start',
 ]);
@@ -104,6 +105,18 @@ export class Broker {
             this.error(client, id, -32602, 'Rename requires an ID and a single-line name of 1–200 characters'); return;
           }
           forwardedParams = { [identity]: params[identity], name: params.name.trim() };
+        }
+        if (method === 'project/create') {
+          if (Object.keys(params).some(k => !['idempotencyKey', 'name', 'roots'].includes(k)) ||
+              typeof params.idempotencyKey !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.idempotencyKey) ||
+              typeof params.name !== 'string' || !params.name.trim() || params.name.trim().length > 200 || /[\u0000-\u001f\u007f]/u.test(params.name) ||
+              !Array.isArray(params.roots) || params.roots.length > 8 || params.roots.some(r =>
+                !r || typeof r !== 'object' || Array.isArray(r) || Object.keys(r).some(k => k !== 'path') ||
+                typeof r.path !== 'string' || !r.path.startsWith('/') || r.path.length > 4096 || /[\u0000-\u001f\u007f]/u.test(r.path))) {
+            this.error(client, id, -32602, 'Create a project with a name, request key and at most 8 absolute folder paths'); return;
+          }
+          forwardedParams = { idempotencyKey: params.idempotencyKey, name: params.name.trim(),
+            roots: [...new Set(params.roots.map(r => posix.normalize(r.path)))].map(path => ({ path })) };
         }
         if (!this.ready) { this.error(client, id, -32002, 'Codex backend is not initialized'); return; }
         try { forwardedParams = mobileOptions(method, forwardedParams, this.threadModels.get(params.threadId)); }

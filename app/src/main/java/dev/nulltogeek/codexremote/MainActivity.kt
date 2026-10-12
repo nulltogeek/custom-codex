@@ -218,6 +218,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         dismissButton = { TextButton(onClick = { confirmArchive = null }) { Text("Cancel") } }) }
     state.renameTarget?.let { target -> RenameDialog(target, state.renaming, state.connection == "Connected", state.renameError,
         vm::dismissRename, vm::rename) }
+    state.newProjectKey?.let { key -> NewProjectDialog(key, state.projectCreateRequest, state.creatingProject,
+        state.connection == "Connected", state.projectCreateError, vm::dismissNewProject, vm::createProject) }
 }
 
 @Composable internal fun AppSidebar(state: ScreenState, navigate: (String) -> Unit) {
@@ -372,7 +374,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 }
 
 @Composable internal fun ProjectScreen(state: ScreenState, vm: RemoteViewModel, favorite: (Project) -> Unit = { vm.favorite(it) }, refresh: () -> Unit = { vm.refresh() },
-    rename: (Project) -> Unit = { vm.beginRename(it) }) {
+    rename: (Project) -> Unit = { vm.beginRename(it) }, newProject: () -> Unit = { vm.beginNewProject() }) {
     var folders by remember { mutableStateOf<Project?>(null) }
     var favoritesOnly by rememberSaveable { mutableStateOf(false) }
     val projects = if (favoritesOnly) state.projects.filter { it.id in state.favoriteProjectIds } else state.projects
@@ -385,6 +387,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                         Text("Saved on ${state.host}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Text("${state.projects.size}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    FilledTonalIconButton(onClick = newProject, enabled = canCreateProject(state), modifier = Modifier.testTag("new-project")) { Icon(Icons.Outlined.Add, "New project") }
                 }
             }
             item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

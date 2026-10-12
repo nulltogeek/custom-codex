@@ -18,6 +18,34 @@ function harness(options = {}) {
   return { broker, upstream, desktop, phone, initialize };
 }
 
+test('project creation forwards a stable request key, name and normalized optional folders', () => {
+  const h = harness(); h.initialize();
+  const idempotencyKey = '12345678-1234-1234-1234-123456789abc';
+  const params = { idempotencyKey, name: '  Work  ', roots: [{ path: '/work/a/../b' }, { path: '/work/b' }] };
+  for (const id of [100, 101]) {
+    h.broker.accept('phone', { id, method: 'project/create', params });
+    assert.deepEqual(h.upstream.at(-1).params, { idempotencyKey, name: 'Work', roots: [{ path: '/work/b' }] });
+    h.broker.receive({ id: h.upstream.at(-1).id, result: { project: { id: 'p', name: 'Work' } } });
+    assert.equal(h.phone.at(-1).id, id);
+  }
+  h.broker.accept('phone', { id: 102, method: 'project/create', params: { idempotencyKey, name: 'No folders', roots: [] } });
+  assert.deepEqual(h.upstream.at(-1).params.roots, []);
+});
+
+test('invalid project creation names, keys, folders and extra mutations never reach the backend', () => {
+  const h = harness(); h.initialize(); const before = h.upstream.length;
+  const valid = { idempotencyKey: '12345678-1234-1234-1234-123456789abc', name: 'Work', roots: [] };
+  for (const change of [
+    { name: ' ' }, { name: 'x'.repeat(201) }, { idempotencyKey: '' }, { roots: 'wrong' },
+    { roots: [{ path: 'relative' }] }, { roots: [{ path: '/bad\u0000folder' }] },
+    { roots: Array.from({ length: 9 }, () => ({ path: '/work' })) }, { roots: [{ path: '/work', extra: true }] },
+    { metadata: { changed: 'yes' } },
+  ]) {
+    h.broker.accept('phone', { id: 103, method: 'project/create', params: { ...valid, ...change } });
+    assert.equal(h.phone.at(-1).error.code, -32602); assert.equal(h.upstream.length, before);
+  }
+});
+
 test('phones rename chats and projects with name-only requests and receive their own result', () => {
   const h = harness(); h.initialize();
   for (const [method, identity] of [['thread/name/set', 'threadId'], ['project/update', 'projectId']]) {

@@ -287,6 +287,47 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun model(id: String) { mutable.update { it.copy(selectedModel = id, selectedEffort = it.models.find { m -> m.id == id }?.defaultEffort.orEmpty()) } }
     fun effort(value: String) { mutable.update { it.copy(selectedEffort = value) } }
     fun noticeDismiss() { mutable.update { it.copy(notice = null) } }
+    fun beginNewProject() {
+        mutable.update { if (!canCreateProject(it)) it else it.copy(newProjectKey = java.util.UUID.randomUUID().toString(),
+            projectCreateRequest = null, projectCreateError = null) }
+    }
+    fun dismissNewProject() {
+        mutable.update { if (it.creatingProject) it else it.copy(newProjectKey = null, projectCreateRequest = null, projectCreateError = null) }
+    }
+    fun createProject(name: String, folders: String) {
+        val initial = mutable.value
+        val key = initial.newProjectKey ?: return
+        val validation = projectCreationValidation(name, folders)
+        if (validation != null) { mutable.update { it.copy(projectCreateError = validation) }; return }
+        if (!canCreateProject(initial)) return
+        val request = initial.projectCreateRequest ?: ProjectCreateRequest(name.trim(), projectFolders(folders))
+        if (!mutable.compareAndSet(initial, initial.copy(creatingProject = true, projectCreateRequest = request, projectCreateError = null))) return
+        viewModelScope.launch(Dispatchers.IO) {
+            var accepted = false
+            try {
+                val result = rpc.call("project/create", projectCreateParams(key, request))
+                accepted = true
+                if (mutable.value.endpoint != initial.endpoint || mutable.value.username != initial.username || !mutable.value.signedIn) return@launch
+                val project = createdProject(result.obj("project"))
+                mutable.update { it.copy(projects = it.projects.filterNot { p -> p.id == project.id } + project) }
+                cachedInventory = inventoryWithProject(cachedInventory, project)
+                saveCache()
+                mutable.update { if (it.newProjectKey != key) it else it.copy(newProjectKey = null, projectCreateRequest = null,
+                    projectCreateError = null, page = "chats", projectFilter = project.id, selectedChat = null) }
+            } catch (e: Exception) {
+                if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                else mutable.update { if (it.newProjectKey != key) it else it.copy(
+                    projectCreateRequest = if (!accepted && e is RpcException && e.code in listOf(-32601, -32602, -32002)) null else request,
+                    projectCreateError = when {
+                        accepted -> "Project saved on your computer. Retry to finish updating this phone."
+                        e is RpcException && e.code == -32601 -> "Update the backend to create projects."
+                        e is RpcException -> e.message ?: "Could not create the project."
+                        else -> "Creation could not be confirmed. Retry to check the result before creating another project."
+                    }) }
+            } finally { mutable.update { if (it.newProjectKey == key || it.newProjectKey == null) it.copy(creatingProject = false) else it } }
+        }
+    }
     fun beginRename(chat: Chat) {
         mutable.update { if (!canRename(it)) it else it.copy(renameTarget = RenameTarget(RenameKind.Chat, chat.id, chat.title), renameError = null) }
     }

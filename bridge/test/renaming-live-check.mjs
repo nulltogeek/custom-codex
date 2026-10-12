@@ -50,6 +50,10 @@ async function runtime() {
 
 let server = await runtime();
 try {
+  const emptyParams = { idempotencyKey: randomUUID(), name: 'No folders', roots: [] };
+  const empty = (await server.call('project/create', emptyParams)).project;
+  assert.deepEqual(empty.roots, []);
+  assert.equal((await server.call('project/create', emptyParams)).project.id, empty.id);
   const created = await server.call('project/create', { idempotencyKey: randomUUID(), name: 'Original project', roots: [{ path: home }], metadata: { test: 'retained' } });
   const projectId = created.project.id;
   const result = await server.call('project/update', { projectId, name: 'Renamed project' });
@@ -64,9 +68,11 @@ try {
   assert.equal(catalog.projects.find(p => p.id === projectId).name, 'Renamed project');
   assert.equal(catalog.assignments[threadId], projectId);
   await server.close(); server = await runtime();
+  assert.equal((await server.call('project/create', emptyParams)).project.id, empty.id);
+  assert.equal(readProjects(home).projects.filter(p => p.id === empty.id).length, 1);
   assert.equal((await server.call('project/read', { projectId })).project.name, 'Renamed project');
   const saved = (await server.call('thread/read', { threadId, includeTurns: true })).thread;
   assert.equal(saved.name, 'Renamed chat'); assert.equal(saved.projectId, projectId);
   assert.deepEqual(saved.turns, before.turns);
-  console.log('PASS: chat/project names persist across restart; history, IDs, roots, metadata and membership remain intact. No model calls.');
+  console.log('PASS: folderless projects and repeated creation requests persist without duplicates across restart; chat/project names, history, IDs, roots, metadata and membership remain intact. No model calls.');
 } finally { await server.close(); }
