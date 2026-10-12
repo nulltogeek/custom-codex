@@ -162,6 +162,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 if (state.signedIn) {
                     IconButton(onClick = { vm.refresh() }, enabled = canRefreshHistory(state)) { Icon(Icons.Outlined.Refresh, "Refresh history") }
                     state.selectedChat?.let { chat ->
+                        IconButton(onClick = { vm.beginRename(chat) }, enabled = canRename(state)) { Icon(Icons.Outlined.Edit, "Rename chat") }
                         FavoriteButton(state.favoriteChats.any { it.id == chat.id }, "chat ${chat.title}") { vm.favorite(chat) }
                         if (chat.archived) IconButton(onClick = { confirmDelete = chat }, enabled = canDeleteChat(state, chat)) { Icon(Icons.Outlined.DeleteOutline, "Delete chat") }
                         IconButton(onClick = { confirmArchive = chat }, enabled = canArchive(state, chat)) { Icon(if (chat.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, if (chat.archived) "Restore chat" else "Archive chat") }
@@ -215,6 +216,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         text = { Text(if (chat.archived) "Return this conversation to your active chats on both devices." else "Move this conversation to archived history on both devices. Codex may also archive its child-agent chats.") },
         confirmButton = { TextButton(onClick = { vm.archive(chat); confirmArchive = null }) { Text(if (chat.archived) "Restore" else "Archive") } },
         dismissButton = { TextButton(onClick = { confirmArchive = null }) { Text("Cancel") } }) }
+    state.renameTarget?.let { target -> RenameDialog(target, state.renaming, state.connection == "Connected", state.renameError,
+        vm::dismissRename, vm::rename) }
 }
 
 @Composable internal fun AppSidebar(state: ScreenState, navigate: (String) -> Unit) {
@@ -259,7 +262,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 }
 
 @Composable internal fun ChatsScreen(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit, loadMore: (Boolean) -> Unit = { vm.loadMore(it) },
-    archive: (Chat) -> Unit = {}, favorite: (Chat) -> Unit = { vm.favorite(it) }, refresh: () -> Unit = { vm.refresh() }, archivedOnly: Boolean = false, delete: (Chat) -> Unit = {}) {
+    archive: (Chat) -> Unit = {}, favorite: (Chat) -> Unit = { vm.favorite(it) }, refresh: () -> Unit = { vm.refresh() }, archivedOnly: Boolean = false, delete: (Chat) -> Unit = {},
+    rename: (Chat) -> Unit = { vm.beginRename(it) }) {
     val query = state.searchTerm; var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val tab = if (archivedOnly) 1 else selectedTab
     val project = state.projects.find { it.id == state.projectFilter }
@@ -313,7 +317,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 val p = state.projects.find { it.id == (state.assignments[chat.id] ?: chat.projectId) } ?: state.projects.find { chat.cwd in it.roots }
                 SwipeArchiveRow(chat, canArchive(state, chat), archive = { archive(chat) },
                     deleteEnabled = canDeleteChat(state, chat), delete = { delete(chat) }) {
-                    ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) })
+                    ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) }, renameEnabled = canRename(state), onRename = { rename(chat) })
                 }
             }
             if (page != null) item(key = "catalog-footer") {
@@ -339,7 +343,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
 }
 
-@Composable private fun ChatRow(chat: Chat, project: String, favorite: Boolean, onFavorite: () -> Unit, onClick: () -> Unit) {
+@Composable private fun ChatRow(chat: Chat, project: String, favorite: Boolean, onFavorite: () -> Unit, onClick: () -> Unit,
+    renameEnabled: Boolean, onRename: () -> Unit) {
     Surface(onClick = onClick, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(10.dp)) {
@@ -361,11 +366,13 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 }
             }
             FavoriteButton(favorite, "chat ${chat.title}", onFavorite)
+            IconButton(onClick = onRename, enabled = renameEnabled) { Icon(Icons.Outlined.Edit, "Rename chat ${chat.title}", Modifier.size(20.dp)) }
         }
     }
 }
 
-@Composable internal fun ProjectScreen(state: ScreenState, vm: RemoteViewModel, favorite: (Project) -> Unit = { vm.favorite(it) }, refresh: () -> Unit = { vm.refresh() }) {
+@Composable internal fun ProjectScreen(state: ScreenState, vm: RemoteViewModel, favorite: (Project) -> Unit = { vm.favorite(it) }, refresh: () -> Unit = { vm.refresh() },
+    rename: (Project) -> Unit = { vm.beginRename(it) }) {
     var folders by remember { mutableStateOf<Project?>(null) }
     var favoritesOnly by rememberSaveable { mutableStateOf(false) }
     val projects = if (favoritesOnly) state.projects.filter { it.id in state.favoriteProjectIds } else state.projects
@@ -398,6 +405,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                             Text("$count loaded chats" + if (project.roots.size > 1) " · ${project.roots.size} folders" else "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                         }
                         FavoriteButton(project.id in state.favoriteProjectIds, "project ${project.name}") { favorite(project) }
+                        IconButton(onClick = { rename(project) }, enabled = canRename(state)) { Icon(Icons.Outlined.Edit, "Rename project ${project.name}", Modifier.size(20.dp)) }
                         IconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat in ${project.name}", Modifier.size(20.dp)) }
                     }
                 }

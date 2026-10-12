@@ -12,6 +12,7 @@
     "test:standalone": "node bridge/test/standalone-live-check.mjs",
     "test:desktop": "node bridge/test/desktop-check.mjs",
     "test:writer": "node bridge/test/writer-conflict-live-check.mjs",
+    "test:rename": "node bridge/test/renaming-live-check.mjs",
     "check": "node --check bridge/cli.mjs && node --check bridge/standalone.mjs && node --check bridge/broker.mjs && node --check bridge/host.mjs && node --check bridge/auth.mjs && node --check bridge/mobile-options.mjs && node --check bridge/uploads.mjs && node --check scripts/verify-server.mjs && node --check scripts/set-login.mjs && node --check scripts/verify-mobile-features.mjs && node --check bridge/app-updates.mjs && node --check scripts/publish-app-update.mjs && node --check scripts/verify-app-update.mjs && node --check scripts/verify-runtime-idle.mjs && node --check bridge/test/writer-conflict-live-check.mjs && node --check scripts/verify-attachments.mjs"
   },
   "dependencies": {

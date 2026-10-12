@@ -18,6 +18,30 @@ function harness(options = {}) {
   return { broker, upstream, desktop, phone, initialize };
 }
 
+test('phones rename chats and projects with name-only requests and receive their own result', () => {
+  const h = harness(); h.initialize();
+  for (const [method, identity] of [['thread/name/set', 'threadId'], ['project/update', 'projectId']]) {
+    h.broker.accept('phone', { id: 10, method, params: { [identity]: 'saved', name: '  پروژه جدید  ' } });
+    assert.equal(h.upstream.at(-1).method, method);
+    assert.deepEqual(h.upstream.at(-1).params, { [identity]: 'saved', name: 'پروژه جدید' });
+    h.broker.receive({ id: h.upstream.at(-1).id, result: { ok: true } });
+    assert.equal(h.phone.at(-1).id, 10); assert.equal(h.phone.at(-1).result.ok, true);
+  }
+});
+
+test('project rename cannot change roots or metadata and invalid names never reach the backend', () => {
+  const h = harness(); h.initialize(); const before = h.upstream.length;
+  for (const params of [
+    { projectId: 'p', name: 'Valid', roots: [{ path: '/other' }] },
+    { projectId: 'p', name: 'Valid', metadata: { changed: 'yes' } },
+    { projectId: 'p', name: ' ' }, { projectId: '', name: 'Valid' },
+    { projectId: 'p', name: 'x'.repeat(201) }, { projectId: 'p', name: 'First\nSecond' },
+  ]) {
+    h.broker.accept('phone', { id: 11, method: 'project/update', params });
+    assert.equal(h.phone.at(-1).error.code, -32602); assert.equal(h.upstream.length, before);
+  }
+});
+
 test('desktop initialization unchanged; phone joins without a second upstream initialization', () => {
   const h = harness(); h.initialize(); assert.equal(h.broker.ready, true);
   const before = h.upstream.length;

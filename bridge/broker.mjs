@@ -10,6 +10,7 @@ const PHONE_METHODS = new Set([
   'thread/list', 'thread/read', 'thread/loaded/list', 'thread/turns/list',
   'thread/items/list', 'thread/start', 'thread/resume', 'thread/fork',
   'thread/name/set', 'thread/archive', 'thread/unarchive', 'thread/delete', 'thread/metadata/update',
+  'project/update',
   'turn/start', 'turn/steer', 'turn/interrupt', 'model/list',
   'account/read', 'account/rateLimits/read', 'review/start',
 ]);
@@ -95,8 +96,17 @@ export class Broker {
         if (method === 'thread/delete' && (typeof params.threadId !== 'string' || !params.threadId || Object.keys(params).some(k => k !== 'threadId'))) {
           this.error(client, id, -32602, 'Delete requires only a threadId'); return;
         }
+        if (['thread/name/set', 'project/update'].includes(method)) {
+          const identity = method === 'project/update' ? 'projectId' : 'threadId';
+          if (typeof params[identity] !== 'string' || !params[identity].trim() ||
+              typeof params.name !== 'string' || !params.name.trim() || params.name.trim().length > 200 ||
+              /[\u0000-\u001f\u007f]/u.test(params.name) || Object.keys(params).some(k => ![identity, 'name'].includes(k))) {
+            this.error(client, id, -32602, 'Rename requires an ID and a single-line name of 1–200 characters'); return;
+          }
+          forwardedParams = { [identity]: params[identity], name: params.name.trim() };
+        }
         if (!this.ready) { this.error(client, id, -32002, 'Codex backend is not initialized'); return; }
-        try { forwardedParams = mobileOptions(method, params, this.threadModels.get(params.threadId)); }
+        try { forwardedParams = mobileOptions(method, forwardedParams, this.threadModels.get(params.threadId)); }
         catch (error) { this.error(client, id, -32602, error.message); return; }
       }
       if (id !== undefined) {

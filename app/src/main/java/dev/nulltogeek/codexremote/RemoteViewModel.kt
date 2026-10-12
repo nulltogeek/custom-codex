@@ -287,6 +287,52 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun model(id: String) { mutable.update { it.copy(selectedModel = id, selectedEffort = it.models.find { m -> m.id == id }?.defaultEffort.orEmpty()) } }
     fun effort(value: String) { mutable.update { it.copy(selectedEffort = value) } }
     fun noticeDismiss() { mutable.update { it.copy(notice = null) } }
+    fun beginRename(chat: Chat) {
+        mutable.update { if (!canRename(it)) it else it.copy(renameTarget = RenameTarget(RenameKind.Chat, chat.id, chat.title), renameError = null) }
+    }
+    fun beginRename(project: Project) {
+        mutable.update { if (!canRename(it)) it else it.copy(renameTarget = RenameTarget(RenameKind.Project, project.id, project.name), renameError = null) }
+    }
+    fun dismissRename() { mutable.update { if (it.renaming) it else it.copy(renameTarget = null, renameError = null) } }
+    fun rename(name: String) {
+        val initial = mutable.value
+        val target = initial.renameTarget ?: return
+        val validation = renameValidation(name)
+        if (validation != null) { mutable.update { it.copy(renameError = validation) }; return }
+        if (!canRename(initial) || name.trim() == target.name) return
+        if (!mutable.compareAndSet(initial, initial.copy(renaming = true, renameError = null))) return
+        viewModelScope.launch(Dispatchers.IO) {
+            var accepted = false
+            try {
+                val result = rpc.call(if (target.kind == RenameKind.Chat) "thread/name/set" else "project/update",
+                    jsonObject((if (target.kind == RenameKind.Chat) "threadId" else "projectId") to target.id, "name" to name.trim()))
+                accepted = true
+                if (mutable.value.endpoint != initial.endpoint || mutable.value.username != initial.username || !mutable.value.signedIn) return@launch
+                val savedName = if (target.kind == RenameKind.Project) result.obj("project").text("name", name.trim()) else name.trim()
+                if (target.kind == RenameKind.Chat) {
+                    val sequence = result["_bridgeSequence"]?.jsonPrimitive?.longOrNull ?: 0
+                    mutable.update { it.withRenamedChat(target.id, savedName).let { next ->
+                        if (next.selectedChat?.id == target.id) next.copy(titleSequence = maxOf(next.titleSequence, sequence)) else next } }
+                    cachedList = JsonArray(cachedList.map { if (it.jsonObject.text("id") == target.id) renameCachedChat(it.jsonObject, savedName) else it })
+                    cachedThreads[target.id]?.let { cachedThreads = JsonObject(cachedThreads + (target.id to renameCachedChat(it.jsonObject, savedName))) }
+                    saveFavorites()
+                } else {
+                    mutable.update { it.copy(projects = it.projects.map { p -> if (p.id == target.id) p.copy(name = savedName) else p }) }
+                    cachedInventory = JsonObject(cachedInventory + ("projects" to JsonArray(cachedInventory.array("projects").map {
+                        if (it.jsonObject.text("id") == target.id) JsonObject(it.jsonObject + ("name" to JsonPrimitive(savedName))) else it
+                    })))
+                }
+                saveCache()
+                mutable.update { if (it.renameTarget != target) it else it.copy(renameTarget = null, renameError = null) }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                else mutable.update { if (it.renameTarget != target) it else it.copy(renameError =
+                    if (accepted) "Name saved on your computer. Local cache could not update; refresh history."
+                    else e.message ?: "Could not rename. Try again.") }
+            } finally { mutable.update { it.copy(renaming = false) } }
+        }
+    }
     fun infoNoticeDismiss(key: NoticeKey) { mutable.update { it.resolveInfoNotice(key) } }
     fun showDiff(change: Change?) { mutable.update { it.copy(diff = change) } }
     suspend fun attachmentImage(source: String): ByteArray = rpc.downloadAttachmentImage(source)
