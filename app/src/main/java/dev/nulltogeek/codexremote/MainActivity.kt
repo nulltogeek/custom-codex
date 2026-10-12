@@ -154,7 +154,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 if (state.signedIn) {
                     IconButton(onClick = { vm.refresh() }, enabled = canRefreshHistory(state)) { Icon(Icons.Outlined.Refresh, "Refresh history") }
                     state.selectedChat?.let { chat ->
-                        IconButton(onClick = { vm.beginRename(chat) }, enabled = canRename(state)) { Icon(Icons.Outlined.Edit, "Rename chat") }
+                        ChatOptionsMenu(chat, canRename(state), canMoveChat(state), { vm.beginRename(chat) }, { vm.beginMoveChat(chat) })
                         FavoriteButton(state.favoriteChats.any { it.id == chat.id }, "chat ${chat.title}") { vm.favorite(chat) }
                         if (chat.archived) IconButton(onClick = { confirmDelete = chat }, enabled = canDeleteChat(state, chat)) { Icon(Icons.Outlined.DeleteOutline, "Delete chat") }
                         IconButton(onClick = { confirmArchive = chat }, enabled = canArchive(state, chat)) { Icon(if (chat.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, if (chat.archived) "Restore chat" else "Archive chat") }
@@ -213,6 +213,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         vm::dismissRename, vm::rename) }
     state.newProjectKey?.let { key -> NewProjectDialog(key, state.projectCreateRequest, state.creatingProject,
         state.connection == "Connected", state.projectCreateError, vm::dismissNewProject, vm::createProject) }
+    state.moveChat?.let { chat -> MoveChatDialog(chat, state.projects, state.movingChat, state.connection == "Connected",
+        state.moveChatError, vm::dismissMoveChat, vm::moveChatToProject) }
 }
 
 @Composable internal fun LibraryNavigation(selectedPage: String, navigate: (String) -> Unit) {
@@ -257,7 +259,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 
 @Composable internal fun ChatsScreen(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit, loadMore: (Boolean) -> Unit = { vm.loadMore(it) },
     archive: (Chat) -> Unit = {}, favorite: (Chat) -> Unit = { vm.favorite(it) }, refresh: () -> Unit = { vm.refresh() }, archivedOnly: Boolean = false, delete: (Chat) -> Unit = {},
-    rename: (Chat) -> Unit = { vm.beginRename(it) }) {
+    rename: (Chat) -> Unit = { vm.beginRename(it) }, move: (Chat) -> Unit = { vm.beginMoveChat(it) }) {
     val query = state.searchTerm; var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val tab = if (archivedOnly) 1 else selectedTab
     val project = state.projects.find { it.id == state.projectFilter }
@@ -267,7 +269,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         source.filter { chat ->
             val agent = chat.source == "subAgent" || chat.parentId != null
             val category = when (tab) { 1 -> chat.archived; 2 -> agent; 3 -> chat.id in favorites; else -> !chat.archived && !agent }
-            val projectMatch = project == null || state.assignments[chat.id] == project.id || chat.projectId == project.id || (state.assignments[chat.id] == null && project.roots.any { it == chat.cwd })
+            val projectMatch = project == null || chatBelongsToProject(chat, project, state.assignments)
             category && projectMatch && (chat.title.contains(query, true) || chat.preview.contains(query, true))
         }
     }
@@ -308,10 +310,11 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             if (!archivedOnly) item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(0 to "Recent", 3 to "Favorites", 2 to "Agent chats").forEach { (i, label) -> FilterChip(selected = tab == i, onClick = { selectedTab = i }, label = { Text(label) }) } } }
             if (list.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (archivedOnly) "No archived chats" else if (tab == 3) "No favorite chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (archivedOnly) "Chats you archive appear here. Open one to read or restore it." else if (tab == 3) "Tap a chat's star to keep it here." else "Choose a project or start a conversation.") }
             items(list, key = { it.id }, contentType = { "chat" }) { chat ->
-                val p = state.projects.find { it.id == (state.assignments[chat.id] ?: chat.projectId) } ?: state.projects.find { chat.cwd in it.roots }
+                val p = state.projects.find { chatBelongsToProject(chat, it, state.assignments) }
                 SwipeArchiveRow(chat, canArchive(state, chat), archive = { archive(chat) },
                     deleteEnabled = canDeleteChat(state, chat), delete = { delete(chat) }) {
-                    ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) }, renameEnabled = canRename(state), onRename = { rename(chat) })
+                    ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) },
+                        renameEnabled = canRename(state), onRename = { rename(chat) }, moveEnabled = canMoveChat(state), onMove = { move(chat) })
                 }
             }
             if (page != null) item(key = "catalog-footer") {
@@ -338,7 +341,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 }
 
 @Composable private fun ChatRow(chat: Chat, project: String, favorite: Boolean, onFavorite: () -> Unit, onClick: () -> Unit,
-    renameEnabled: Boolean, onRename: () -> Unit) {
+    renameEnabled: Boolean, onRename: () -> Unit, moveEnabled: Boolean, onMove: () -> Unit) {
     Surface(onClick = onClick, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(10.dp)) {
@@ -360,7 +363,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 }
             }
             FavoriteButton(favorite, "chat ${chat.title}", onFavorite)
-            IconButton(onClick = onRename, enabled = renameEnabled) { Icon(Icons.Outlined.Edit, "Rename chat ${chat.title}", Modifier.size(20.dp)) }
+            ChatOptionsMenu(chat, renameEnabled, moveEnabled, onRename, onMove)
         }
     }
 }
@@ -388,7 +391,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 FilterChip(favoritesOnly, { favoritesOnly = true }, label = { Text("Favorites") })
             } }
             items(projects, key = { it.id }) { project ->
-                val count = state.chats.count { state.assignments[it.id] == project.id || it.projectId == project.id || it.cwd in project.roots }
+                val count = state.chats.count { chatBelongsToProject(it, project, state.assignments) }
                 Surface(onClick = { vm.filterProject(project.id) }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
                     Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(10.dp)) {

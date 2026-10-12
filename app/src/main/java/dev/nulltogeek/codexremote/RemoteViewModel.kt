@@ -287,6 +287,38 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun model(id: String) { mutable.update { it.copy(selectedModel = id, selectedEffort = it.models.find { m -> m.id == id }?.defaultEffort.orEmpty()) } }
     fun effort(value: String) { mutable.update { it.copy(selectedEffort = value) } }
     fun noticeDismiss() { mutable.update { it.copy(notice = null) } }
+    fun beginMoveChat(chat: Chat) {
+        mutable.update { if (!canMoveChat(it)) it else it.copy(moveChat = chat.copy(projectId = it.assignments[chat.id] ?: chat.projectId), moveChatError = null) }
+    }
+    fun dismissMoveChat() { mutable.update { if (it.movingChat) it else it.copy(moveChat = null, moveChatError = null) } }
+    fun moveChatToProject(projectId: String) {
+        val initial = mutable.value
+        val chat = initial.moveChat ?: return
+        if (!canMoveChat(initial) || projectId == chat.projectId) return
+        if (initial.projects.none { it.id == projectId }) { mutable.update { it.copy(moveChatError = "Choose an available project.") }; return }
+        if (!mutable.compareAndSet(initial, initial.copy(movingChat = true, moveChatError = null))) return
+        viewModelScope.launch(Dispatchers.IO) {
+            var accepted = false
+            try {
+                val result = rpc.call("thread/metadata/update", chatMoveParams(chat.id, projectId))
+                accepted = true
+                if (mutable.value.endpoint != initial.endpoint || mutable.value.username != initial.username || !mutable.value.signedIn) return@launch
+                check(result.obj("thread").text("id") == chat.id && result.obj("thread").text("projectId") == projectId) { "Project move could not be confirmed. Retry to check it." }
+                mutable.update { it.withMovedChat(chat.id, projectId) }
+                cachedList = JsonArray(cachedList.map { if (it.jsonObject.text("id") == chat.id) cachedChatWithProject(it.jsonObject, projectId) else it })
+                cachedThreads[chat.id]?.let { cachedThreads = JsonObject(cachedThreads + (chat.id to cachedChatWithProject(it.jsonObject, projectId))) }
+                cachedInventory = inventoryWithChatProject(cachedInventory, chat.id, projectId)
+                saveFavorites(); saveCache()
+                mutable.update { if (it.moveChat?.id != chat.id) it else it.copy(moveChat = null, moveChatError = null) }
+            } catch (e: Exception) {
+                if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                else mutable.update { if (it.moveChat?.id != chat.id) it else it.copy(moveChatError =
+                    if (accepted) "Project move acknowledged. Retry to finish checking and updating this phone."
+                    else e.message ?: "Could not move this chat. Try again.") }
+            } finally { mutable.update { it.copy(movingChat = false) } }
+        }
+    }
     fun beginNewProject() {
         mutable.update { if (!canCreateProject(it)) it else it.copy(newProjectKey = java.util.UUID.randomUUID().toString(),
             projectCreateRequest = null, projectCreateError = null) }
@@ -998,7 +1030,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                             selectedChat = if (selected) state.selectedChat?.copy(title = title) else state.selectedChat,
                             titleSequence = if (selected) sequence else state.titleSequence)
                     }
-                    "thread/project/updated" -> state = state.copy(assignments = if (p.text("projectId").isEmpty()) state.assignments - threadId else state.assignments + (threadId to p.text("projectId")))
+                    "thread/project/updated" -> state = state.withMovedChat(threadId, p.text("projectId").ifEmpty { null })
                     "thread/archived", "thread/unarchived" -> state = state.copy(chats = state.chats.map { if (it.id == threadId) it.copy(archived = method == "thread/archived") else it },
                         favoriteChats = state.favoriteChats.map { if (it.id == threadId) it.copy(archived = method == "thread/archived") else it },
                         selectedChat = state.selectedChat?.let { if (it.id == threadId) it.copy(archived = method == "thread/archived") else it })

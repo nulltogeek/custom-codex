@@ -57,6 +57,7 @@ data class ScreenState(
     val renameTarget: RenameTarget? = null, val renaming: Boolean = false, val renameError: String? = null,
     val newProjectKey: String? = null, val projectCreateRequest: ProjectCreateRequest? = null,
     val creatingProject: Boolean = false, val projectCreateError: String? = null,
+    val moveChat: Chat? = null, val movingChat: Boolean = false, val moveChatError: String? = null,
     val queuedMessages: List<QueuedMessage> = emptyList(), val pausedQueues: Set<String> = emptySet(), val queueBlocked: Boolean = false,
     val theme: String = "system", val diff: Change? = null, val page: String = "chats",
     val projectFilter: String? = null, val uncertainSend: Boolean = false,

@@ -18,6 +18,19 @@ function harness(options = {}) {
   return { broker, upstream, desktop, phone, initialize };
 }
 
+test('chat project assignment uses the existing metadata API and broadcasts membership updates', () => {
+  const h = harness(); h.initialize(); const second = [];
+  h.broker.addClient('second', message => second.push(message));
+  h.broker.accept('second', { id: 1, method: 'bridge/subscribe', params: {} });
+  h.broker.accept('phone', { id: 50, method: 'thread/metadata/update', params: { threadId: 'c', projectId: 'p' } });
+  assert.deepEqual(h.upstream.at(-1).params, { threadId: 'c', projectId: 'p' });
+  h.broker.receive({ id: h.upstream.at(-1).id, result: { thread: { id: 'c', projectId: 'p' } } });
+  assert.equal(h.phone.at(-1).result.thread.projectId, 'p');
+  const update = { method: 'thread/project/updated', params: { threadId: 'c', projectId: 'p' } };
+  h.broker.receive(update);
+  assert.deepEqual(second.at(-1).message, update); assert.deepEqual(h.phone.at(-1).message, update);
+});
+
 test('project creation forwards a stable request key, name and normalized optional folders', () => {
   const h = harness(); h.initialize();
   const idempotencyKey = '12345678-1234-1234-1234-123456789abc';

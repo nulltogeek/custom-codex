@@ -1,7 +1,7 @@
 # Rename chats and projects
 
-Tap the pencil beside a chat in Chats or Archived chats, or in the open chat's
-toolbar. In Projects, tap the pencil beside the project's name. Edit the current
+Open a chat's three-dot options in Chats, Archived chats or the open chat's
+toolbar, then choose Rename chat. In Projects, tap the pencil beside the project's name. Edit the current
 name and tap Save. Cancel leaves the existing name unchanged. Saving requires a
 connection and a nonblank, single-line name of at most 200 characters.
 

@@ -64,6 +64,7 @@ See [picker recovery and visible upload status](docs/mobile-0.7.2.md).
 
 The bottom menu contains Chats, Archived, Projects and Settings. Archived chats offer
 Restore and confirmed Delete; update and restart the host bridge to allow deletion.
+Use a chat's three-dot menu to rename it or [move it into a project](docs/moving-chats.md).
 Enable completion alerts in Settings; see [task notifications](docs/task-notifications.md)
 for background monitoring and Android limits.
 
