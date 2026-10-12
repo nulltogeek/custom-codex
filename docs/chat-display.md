@@ -39,7 +39,7 @@ When you scroll up, a down-arrow button appears at the bottom right. Tap it to
 return to the latest message and resume following new replies. The button keeps
 an accessible “Jump to latest” label without visible text.
 
-Open **Archived** in the sidebar to browse archived chats, including agent
+Tap **Archived** in the bottom menu to browse archived chats, including agent
 chats. Search and project filters apply to this section, and older archived
 pages load as you scroll. Open a chat and tap **Restore chat**, or swipe right
 on its row, to review the restore confirmation. Back returns to Archived.
@@ -54,10 +54,10 @@ after confirmation from the server (or a `thread/deleted` event). An uncertain r
 asks the user to refresh rather than automatically retrying. The host bridge must be
 updated to allow this API; no direct database or filesystem deletion is used.
 
-Library navigation uses a sidebar opened with the toolbar menu button or an edge
-swipe. Chats, Archived, Projects and Settings have full-width labeled destinations.
-Selecting one closes the sidebar; Back closes an open sidebar first. Conversations
-and diffs keep their Back button, returning to the library section they came from.
+Library navigation uses the original bottom menu with Chats, Archived, Projects
+and Settings. The selected section is highlighted. The menu is hidden while
+reading a conversation or diff, and on the sign-in screen. Conversations and
+diffs keep their Back button, returning to the library section they came from.
 
 Deleting a chat invalidates old pagination requests and reloads the catalogue, so
 offset cursors cannot skip a conversation after the deleted row disappears.

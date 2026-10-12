@@ -135,18 +135,10 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     var asyncQuestion by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmArchive by remember { mutableStateOf<Chat?>(null) }
     var confirmDelete by remember { mutableStateOf<Chat?>(null) }
-    val drawer = rememberDrawerState(DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
-    val libraryVisible = state.signedIn && state.selectedChat == null && state.diff == null
-    LaunchedEffect(libraryVisible) { if (!libraryVisible) drawer.close() }
     val pending = state.pending.find { it.id == approvalId }
     BackHandler(state.diff != null || state.selectedChat != null) {
         if (state.diff != null) vm.showDiff(null) else vm.page(state.page)
     }
-    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = libraryVisible, drawerContent = {
-        if (state.signedIn) AppSidebar(state) { page -> vm.page(page); scope.launch { drawer.close() } }
-    }) {
-    BackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
     Scaffold(containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(expandedHeight = 56.dp, title = {
@@ -157,7 +149,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             }, navigationIcon = {
                 if (state.diff != null || state.selectedChat != null) IconButton(onClick = { if (state.diff != null) vm.showDiff(null) else vm.page(state.page) }) {
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
-                } else if (state.signedIn) IconButton(onClick = { scope.launch { drawer.open() } }, modifier = Modifier.testTag("open-sidebar")) { Icon(Icons.Outlined.Menu, "Open navigation menu") }
+                }
             }, actions = {
                 if (state.signedIn) {
                     IconButton(onClick = { vm.refresh() }, enabled = canRefreshHistory(state)) { Icon(Icons.Outlined.Refresh, "Refresh history") }
@@ -169,6 +161,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     }
                 }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
+        }, bottomBar = {
+            if (state.signedIn && state.selectedChat == null && state.diff == null) LibraryNavigation(state.page, vm::page)
         }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (state.loading && !(state.refreshing && state.selectedChat == null && state.page in listOf("chats", "archived", "projects"))) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -191,7 +185,6 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 else -> ChatsScreen(state, vm, approval = { approvalId = it.id }, archive = { confirmArchive = it }, delete = { confirmDelete = it })
             } }
         }
-    }
     }
     if (pending?.method == "item/tool/requestUserInput") QuestionDialog(pending.id, pending.questions(),
         state.connection == "Connected", pending.id in state.answeringInputs, state.inputErrors[pending.id],
@@ -222,22 +215,21 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         state.connection == "Connected", state.projectCreateError, vm::dismissNewProject, vm::createProject) }
 }
 
-@Composable internal fun AppSidebar(state: ScreenState, navigate: (String) -> Unit) {
-    ModalDrawerSheet(Modifier.widthIn(max = 300.dp)) {
-        Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Codex Remote", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text(state.host, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(state.connection, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            HorizontalDivider(Modifier.padding(bottom = 12.dp))
+@Composable internal fun LibraryNavigation(selectedPage: String, navigate: (String) -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             listOf(Triple("chats", "Chats", Icons.AutoMirrored.Outlined.Chat), Triple("archived", "Archived", Icons.Outlined.Archive),
                 Triple("projects", "Projects", Icons.Outlined.FolderOpen), Triple("settings", "Settings", Icons.Outlined.Settings)).forEach { (page, label, icon) ->
-                NavigationDrawerItem(label = { Text(label) }, selected = state.page == page, onClick = { navigate(page) },
-                    icon = { Icon(icon, null) }, modifier = Modifier.testTag("nav-$page").padding(vertical = 2.dp))
+                TextButton(onClick = { navigate(page) }, modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("nav-$page").semantics { selected = selectedPage == page },
+                    colors = ButtonDefaults.textButtonColors(containerColor = if (selectedPage == page) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                        contentColor = if (selectedPage == page) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant),
+                    contentPadding = PaddingValues(horizontal = 6.dp)) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.height(4.dp))
+                        Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    }
+                }
             }
-            Text("${state.username} · ${BuildConfig.VERSION_NAME}", Modifier.padding(16.dp), style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

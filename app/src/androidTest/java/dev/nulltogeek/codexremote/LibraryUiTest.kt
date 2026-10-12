@@ -156,7 +156,6 @@ class LibraryUiTest {
             RemoteApp(state.copy(signedIn = true, connection = "Connected", motion = false, chats = listOf(chat),
                 projects = listOf(Project("p", "Project", listOf("/workspace")))), vm)
         }
-        compose.onNodeWithTag("open-sidebar").performClick()
         compose.onNodeWithTag("nav-archived").assertIsDisplayed().performClick()
         assertArchiveDestination()
         compose.onNodeWithText("Saved conversation").performClick()
@@ -178,29 +177,27 @@ class LibraryUiTest {
     }
 
     private fun assertArchiveDestination() {
-        compose.onNodeWithTag("open-sidebar").performClick()
         compose.onNodeWithTag("nav-archived").assertIsSelected()
-        compose.onNodeWithTag("nav-archived").performClick()
     }
 
-    @Test fun sidebarNavigatesAndBackClosesItWithoutChangingPage() {
+    @Test fun bottomNavigationSelectsEachPageAndHidesWhileReadingAChat() {
         val vm = RemoteViewModel(compose.activity.application)
+        val chat = Chat("navigation-chat", "Navigation conversation", "", "/workspace")
         render {
             val state by vm.state.collectAsState()
-            RemoteApp(state.copy(signedIn = true, connection = "Connected", motion = false), vm)
+            RemoteApp(state.copy(signedIn = true, connection = "Connected", motion = false, chats = listOf(chat)), vm)
         }
-        compose.onNodeWithTag("open-sidebar").performClick()
+        compose.onNodeWithTag("nav-chats").assertIsSelected()
+        compose.onNodeWithTag("nav-archived").performClick().assertIsSelected()
         compose.onNodeWithTag("nav-projects").performClick()
-        compose.onNodeWithText("Projects").assertIsDisplayed()
-        compose.onNodeWithTag("open-sidebar").performClick()
         compose.onNodeWithTag("nav-projects").assertIsSelected()
-        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-        compose.waitForIdle()
-        compose.onNodeWithTag("open-sidebar").assertIsDisplayed()
         compose.runOnIdle { assertEquals("projects", vm.state.value.page) }
-        compose.onNodeWithTag("open-sidebar").performClick()
-        compose.onNodeWithTag("nav-settings").performClick()
-        compose.onNodeWithText("Settings").assertIsDisplayed()
+        compose.onNodeWithTag("nav-settings").performClick().assertIsSelected()
+        compose.onNodeWithTag("nav-chats").performClick()
+        compose.onNodeWithText("Navigation conversation").performClick()
+        for (page in listOf("chats", "archived", "projects", "settings")) compose.onNodeWithTag("nav-$page").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithTag("nav-chats").assertIsDisplayed().assertIsSelected()
     }
 
     @Test fun projectFavoritesFilterAndToggleAt320Dp() {

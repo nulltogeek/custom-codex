@@ -1,6 +1,6 @@
 # Codex Remote for Android
 
-A native Android 11+ client for a Codex app-server on your Linux machine. Supports chats, projects, streaming, model controls, approvals, terminal output and diffs, with formatted code, file/image attachments, coding/conversation modes, access presets, message queues with editing and reordering, message copy controls, a command activity heartbeat, favorites, right-swipe archive, sidebar navigation, archived chat restore and confirmed deletion, task completion notifications, password changes, five color accents, optional screen transitions and in-app APK updates.
+A native Android 11+ client for a Codex app-server on your Linux machine. Supports chats, projects, streaming, model controls, approvals, terminal output and diffs, with formatted code, file/image attachments, coding/conversation modes, access presets, message queues with editing and reordering, message copy controls, a command activity heartbeat, favorites, right-swipe archive, bottom navigation, archived chat restore and confirmed deletion, task completion notifications, password changes, five color accents, optional screen transitions and in-app APK updates.
 
 ## Host setup
 
@@ -62,7 +62,7 @@ No cloud-chat integration or automatic prompt retries are included. Rerun protoc
 For selected files/images missing after the Android picker, update to 0.7.2.
 See [picker recovery and visible upload status](docs/mobile-0.7.2.md).
 
-The sidebar contains Chats, Archived, Projects and Settings. Archived chats offer
+The bottom menu contains Chats, Archived, Projects and Settings. Archived chats offer
 Restore and confirmed Delete; update and restart the host bridge to allow deletion.
 Enable completion alerts in Settings; see [task notifications](docs/task-notifications.md)
 for background monitoring and Android limits.
