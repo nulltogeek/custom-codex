@@ -4,6 +4,31 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MarkdownTest {
+    @Test fun listMarkersIndentationTasksAndContinuationTextStayTogether() {
+        val blocks = markdownBlocks("1. First item\n   Continue the same item.\n   - Nested **detail**\n- [x] Completed\n- [ ] Pending")
+        assertEquals(listOf("list", "list", "list", "list"), blocks.map { it.kind })
+        assertEquals("1.", blocks.first().marker)
+        assertEquals("First item\nContinue the same item.", blocks.first().text)
+        assertEquals(1, blocks[1].level)
+        assertEquals("•", blocks[1].marker)
+        assertEquals(true, blocks[2].checked)
+        assertEquals("Completed", blocks[2].text)
+        assertEquals(false, blocks[3].checked)
+    }
+    @Test fun quotesFormOneReadableBlockAndTablesRespectInlineCodeAndEscapedPipes() {
+        assertEquals("First line\nSecond line", markdownBlocks("> First line\n> Second line").single().text)
+        val rows = markdownTableRows("| Name | Value |\n| **A** | `a|b` |\n| B | left\\|right |")
+        assertEquals(listOf("Name", "Value"), rows.first())
+        assertEquals(listOf("**A**", "`a|b`"), rows[1])
+        assertEquals(listOf("B", "left|right"), rows[2])
+        assertEquals(listOf("A", "", "C"), markdownTableRows("A || C").single())
+        assertEquals(listOf("A", ""), markdownTableRows("| A | | ").single())
+    }
+    @Test fun deletedTextAndInlineCodeRemainDistinct() {
+        val parts = inlineParts("Use ~~old~~ and `a|b` instead.")
+        assertEquals("old", parts.first { it.style == "strike" }.text)
+        assertEquals("a|b", parts.first { it.style == "code" }.text)
+    }
     @Test fun fencedCodePreservesWhitespaceAndSeparatesExplanatoryText() {
         val blocks = markdownBlocks("Before\n\n```python\ndef greet():\n    return 'hi'\n```\n\nAfter")
         assertEquals(listOf("paragraph", "code", "paragraph"), blocks.map { it.kind })
