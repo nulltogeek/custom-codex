@@ -18,6 +18,96 @@ function harness(options = {}) {
   return { broker, upstream, desktop, phone, initialize };
 }
 
+test('disabled output saves live bytes while preserving command status, sequence and other clients', () => {
+  const h = harness(); h.initialize(); const full = [];
+  h.broker.addClient('full', m => full.push(m));
+  h.broker.accept('full', { id: 1, method: 'bridge/subscribe', params: {} });
+  const before = h.upstream.length;
+  h.broker.accept('phone', { id: 2, method: 'bridge/commandOutput', params: { loadCommandOutput: false } });
+  assert.equal(h.phone.at(-1).result.loadCommandOutput, false);
+  assert.equal(h.upstream.length, before);
+  const output = 'command output\n'.repeat(100000);
+  const command = { id: 'cmd', type: 'commandExecution', command: 'run tests', status: 'completed', exitCode: 0, aggregatedOutput: output };
+  for (const m of [
+    { method: 'item/started', params: { threadId: 'chat', turnId: 'turn', item: { ...command, status: 'inProgress' } } },
+    { method: 'item/commandExecution/outputDelta', params: { threadId: 'chat', turnId: 'turn', itemId: 'cmd', delta: output } },
+    { method: 'item/completed', params: { threadId: 'chat', turnId: 'turn', item: command } },
+  ]) {
+    h.broker.receive(m);
+    const reduced = h.phone.at(-1);
+    assert.ok(JSON.stringify(reduced).length < 500);
+    assert.equal(reduced.sequence, full.at(-1).sequence);
+    assert.deepEqual(full.at(-1).message, m); assert.deepEqual(h.desktop.at(-1), m);
+    assert.deepEqual(h.broker.events.at(-1).event.message, m);
+  }
+  const item = h.phone.at(-1).message.params.item;
+  assert.equal(item.command, 'run tests'); assert.equal(item.status, 'completed'); assert.equal(item.exitCode, 0);
+  assert.equal(item.aggregatedOutput, undefined); assert.equal(item._commandOutputOmitted, true);
+  assert.equal(command.aggregatedOutput, output);
+  h.broker.accept('phone', { id: 3, method: 'bridge/commandOutput', params: { loadCommandOutput: true } });
+  h.broker.receive({ method: 'item/commandExecution/outputDelta', params: { itemId: 'cmd', delta: output } });
+  assert.equal(h.phone.at(-1).message.params.delta, output);
+});
+
+test('command output is omitted from paginated, legacy and resume responses without changing other content', () => {
+  const results = [];
+  const h = harness({ onResult: (method, result) => results.push(result) }); h.initialize();
+  h.broker.accept('phone', { id: 2, method: 'bridge/commandOutput', params: { loadCommandOutput: false } });
+  const items = [
+    { id: 'cmd', type: 'commandExecution', command: 'test', status: 'completed', aggregatedOutput: 'big'.repeat(10000), output: 'alternate'.repeat(10000) },
+    { id: 'u', type: 'userMessage', content: [{ type: 'text', text: 'user text' }] },
+    { id: 'a', type: 'agentMessage', text: 'assistant text' },
+    { id: 'f', type: 'fileChange', changes: [{ path: 'a', diff: '+change' }] },
+    { id: 'tool', type: 'mcpToolCall', result: { output: 'tool result', structuredContent: { type: 'commandExecution', output: 'tool data' } } },
+  ];
+  for (const [method, result] of [
+    ['thread/read', { thread: { id: 'chat', turns: [{ id: 'turn', items }] } }],
+    ['thread/turns/list', { data: [{ id: 'turn', items }], nextCursor: 'older' }],
+    ['thread/items/list', { data: items, nextCursor: 'older' }],
+    ['thread/resume', { thread: { id: 'chat', turns: [{ id: 'turn', items }] } }],
+  ]) {
+    h.broker.accept('phone', { id: 10, method, params: { threadId: 'chat' } });
+    h.broker.receive({ id: h.upstream.at(-1).id, result });
+    const filtered = h.phone.at(-1).result;
+    const reducedItems = filtered.thread?.turns[0].items ?? (method === 'thread/items/list' ? filtered.data : filtered.data[0].items);
+    assert.equal(reducedItems[0].output, undefined); assert.equal(reducedItems[0].aggregatedOutput, undefined);
+    assert.deepEqual(reducedItems.slice(1), items.slice(1));
+    assert.equal(filtered.nextCursor, result.nextCursor);
+    assert.equal(h.phone.at(-1).bridgeSequence, h.broker.sequence);
+    assert.equal(results.at(-1), result); assert.equal(items[0].aggregatedOutput.length, 30000);
+    assert.ok(JSON.stringify(filtered).length < JSON.stringify(result).length / 100);
+  }
+});
+
+test('filtered reconnect replay preserves cursors and leaves approval details unchanged', () => {
+  const h = harness(); h.initialize();
+  h.broker.receive({ method: 'item/commandExecution/outputDelta', params: { threadId: 'chat', turnId: 'turn', itemId: 'cmd', delta: 'large'.repeat(10000) } });
+  const approvalParams = { threadId: 'chat', command: 'dangerous command', reason: 'Please review', availableDecisions: ['decline'],
+    extra: { type: 'commandExecution', output: 'approval details' } };
+  h.broker.receive({ id: 40, method: 'item/commandExecution/requestApproval', params: approvalParams });
+  const replay = []; h.broker.addClient('replay', m => replay.push(m));
+  h.broker.accept('replay', { id: 20, method: 'bridge/subscribe', params: { epoch: h.broker.epoch, sequence: 0, loadCommandOutput: false } });
+  assert.equal(replay[0].result.replayGap, false); assert.equal(replay[0].result.loadCommandOutput, false);
+  assert.deepEqual(replay[0].result.pendingRequests[0].params, approvalParams);
+  assert.equal(replay[1].sequence, 1); assert.equal(replay[1].message.params.delta, '');
+  assert.equal(replay[1].message.params._commandOutputOmitted, true);
+  assert.equal(replay[2].sequence, 2); assert.deepEqual(replay[2].message.params.params, approvalParams);
+  h.broker.accept('replay', { id: 21, method: 'bridge/subscribe', params: { epoch: h.broker.epoch, sequence: 0, loadCommandOutput: true } });
+  assert.equal(replay.at(-2).message.params.delta, 'large'.repeat(10000));
+});
+
+test('invalid command output preferences are rejected without changing client settings', () => {
+  const h = harness(); h.initialize(); const before = h.upstream.length;
+  for (const method of ['bridge/commandOutput', 'bridge/subscribe']) {
+    for (const loadCommandOutput of [null, 'false', 0, {}]) {
+      h.broker.accept('phone', { id: 4, method, params: { loadCommandOutput } });
+      assert.equal(h.phone.at(-1).error.code, -32602); assert.equal(h.broker.clients.get('phone').loadCommandOutput, true);
+    }
+  }
+  h.broker.accept('phone', { id: 5, method: 'bridge/commandOutput', params: { loadCommandOutput: false, extra: true } });
+  assert.equal(h.phone.at(-1).error.code, -32602); assert.equal(h.upstream.length, before);
+});
+
 test('chat project assignment uses the existing metadata API and broadcasts membership updates', () => {
   const h = harness(); h.initialize(); const second = [];
   h.broker.addClient('second', message => second.push(message));

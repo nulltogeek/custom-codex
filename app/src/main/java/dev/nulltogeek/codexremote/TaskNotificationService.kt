@@ -62,8 +62,13 @@ class TaskNotificationService : Service() {
         try {
             while (isActive && enabled(endpoint, username, identity)) {
                 try {
-                    rpc.configure(endpoint, session); rpc.connect(); retry = 1000L
-                    while (isActive && enabled(endpoint, username, identity) && rpc.status.value == "Connected") delay(1000)
+                    rpc.configure(endpoint, session)
+                    // This subscription only needs task metadata, never terminal output.
+                    val legacyOutputAllowed = store.loadCommandOutput
+                    rpc.connect(loadCommandOutput = false, allowLegacyCommandOutput = legacyOutputAllowed)
+                    retry = 1000L
+                    while (isActive && enabled(endpoint, username, identity) && rpc.status.value == "Connected" &&
+                        store.loadCommandOutput == legacyOutputAllowed) delay(1000)
                     if (rpc.status.value == "Session expired") break
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e

@@ -32,7 +32,7 @@ export class Broker {
     this.threadModels = new Map();
     this.events = []; this.bytes = 0; this.maxEvents = maxEvents; this.maxBytes = maxBytes;
   }
-  addClient(id, send) { this.clients.set(id, { send, subscribed: false }); }
+  addClient(id, send) { this.clients.set(id, { send, subscribed: false, loadCommandOutput: true }); }
   removeClient(id) {
     this.clients.delete(id);
     // A disconnected caller's mutation remains upstream. It is never retried.
@@ -45,7 +45,10 @@ export class Broker {
   }
   sendTo(client, message) {
     if (client === 'desktop') this.desktop(message);
-    else this.clients.get(client)?.send(message);
+    else {
+      const c = this.clients.get(client);
+      c?.send(c.loadCommandOutput || !message.result ? message : { ...message, result: omitCommandOutput(message.result) });
+    }
   }
   error(client, id, code, message) { this.sendTo(client, { id, error: { code, message } }); }
   event(message) {
@@ -55,7 +58,7 @@ export class Broker {
     while (this.events.length > this.maxEvents || this.bytes > this.maxBytes) {
       this.bytes -= this.events.shift().size;
     }
-    for (const c of this.clients.values()) if (c.subscribed) c.send(event);
+    for (const c of this.clients.values()) if (c.subscribed) c.send(commandEvent(event, c.loadCommandOutput));
   }
   accept(client, message) {
     if (!message || typeof message !== 'object' || Array.isArray(message)) return;
@@ -63,13 +66,27 @@ export class Broker {
       const { method, params = {}, id } = message;
       let forwardedParams = params;
       if (client !== 'desktop') {
+        if (method === 'bridge/commandOutput') {
+          const c = this.clients.get(client); if (!c) return;
+          if (typeof params.loadCommandOutput !== 'boolean' || Object.keys(params).some(k => k !== 'loadCommandOutput')) {
+            this.error(client, id, -32602, 'Choose whether to load command output'); return;
+          }
+          c.loadCommandOutput = params.loadCommandOutput;
+          this.sendTo(client, { id, result: { loadCommandOutput: c.loadCommandOutput } }); return;
+        }
         if (method === 'bridge/subscribe') {
           const c = this.clients.get(client); if (!c) return;
+          if (Object.hasOwn(params, 'loadCommandOutput')) {
+            if (typeof params.loadCommandOutput !== 'boolean') {
+              this.error(client, id, -32602, 'Choose whether to load command output'); return;
+            }
+            c.loadCommandOutput = params.loadCommandOutput;
+          }
           const last = Number.isSafeInteger(params.sequence) ? params.sequence : 0;
           const earliest = this.events[0]?.event.sequence ?? this.sequence + 1;
           const replay = params.epoch === this.epoch && last >= earliest - 1 && last <= this.sequence;
-          this.sendTo(client, { id, result: { ...this.snapshot(), replayGap: !replay } });
-          if (replay) for (const { event } of this.events) if (event.sequence > last) c.send(event);
+          this.sendTo(client, { id, result: { ...this.snapshot(), replayGap: !replay, loadCommandOutput: c.loadCommandOutput } });
+          if (replay) for (const { event } of this.events) if (event.sequence > last) c.send(commandEvent(event, c.loadCommandOutput));
           c.subscribed = true; return;
         }
         if (method === 'bridge/respond') {
@@ -183,6 +200,30 @@ export class Broker {
         ...(request.client !== 'desktop' ? { bridgeEpoch: this.epoch, bridgeSequence: this.sequence } : {}) });
     }
   }
+}
+
+// Create a phone-specific view; shared history, replay and desktop frames stay intact.
+function omitCommandOutput(value) {
+  if (Array.isArray(value)) return value.map(omitCommandOutput);
+  if (!value || typeof value !== 'object') return value;
+  const command = value.type === 'commandExecution';
+  // Tool results and message content may contain arbitrary JSON resembling an item.
+  if (typeof value.type === 'string' && !command) return value;
+  const result = Object.fromEntries(Object.entries(value)
+    .filter(([field]) => !command || !['aggregatedOutput', 'output'].includes(field))
+    .map(([field, child]) => [field, field === 'pendingRequests' ? child : omitCommandOutput(child)]));
+  if (command) result._commandOutputOmitted = true;
+  return result;
+}
+
+function commandEvent(event, loadCommandOutput) {
+  if (loadCommandOutput || event.message.method === 'bridge/requestPending') return event;
+  const message = event.message;
+  const params = message.method === 'item/commandExecution/outputDelta'
+    ? { threadId: message.params?.threadId, turnId: message.params?.turnId,
+      itemId: message.params?.itemId, delta: '', _commandOutputOmitted: true }
+    : omitCommandOutput(message.params);
+  return { ...event, message: { ...message, params } };
 }
 
 function validHumanAnswer(request, result) {

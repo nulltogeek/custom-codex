@@ -27,7 +27,7 @@ data class TimelineItem(val id: String, val type: String, val text: String, val 
     val status: String = "", val changes: List<Change> = emptyList(), val turnId: String = "",
     val phase: String = "", val turnStatus: String = "", val images: List<TimelineImage> = emptyList(),
     val delivery: String = "", val questions: List<InputQuestion> = emptyList(),
-    val input: JsonArray = JsonArray(emptyList()))
+    val input: JsonArray = JsonArray(emptyList()), val commandOutputOmitted: Boolean = false)
 data class TimelineImage(val source: String, val name: String = "Attached image")
 data class Change(val path: String, val diff: String)
 data class PendingInput(val id: String, val method: String, val params: JsonObject)
@@ -43,6 +43,8 @@ data class ScreenState(
     val assignments: Map<String, String> = emptyMap(), val chats: List<Chat> = emptyList(),
     val favoriteChats: List<Chat> = emptyList(), val favoriteProjectIds: Set<String> = emptySet(),
     val taskNotifications: Boolean = false, val notificationMessage: String = "",
+    val loadCommandOutput: Boolean = true, val commandOutputChanging: Boolean = false,
+    val commandOutputMessage: String = "",
     val passwordChangeAvailable: Boolean = false, val passwordChanging: Boolean = false,
     val passwordMessage: String = "", val passwordChanged: Boolean = false,
     val activeCursor: String? = null, val archivedCursor: String? = null,
@@ -127,7 +129,8 @@ fun parseItem(raw: JsonObject, turnId: String = "", turnStatus: String = ""): Ti
     return TimelineItem(raw.text("id"), type, text, raw.text("command").ifEmpty { raw.text("server").ifEmpty { raw.text("namespace").ifEmpty { raw.text("name") } } }, raw.text("status"), changes,
         turnId = turnId, phase = raw.text("phase"), turnStatus = turnStatus, images = images,
         delivery = raw.text("delivery"), questions = if (type == "agentMessage") parseAsyncQuestions(raw) else emptyList(),
-        input = if (type == "userMessage") raw.array("content") else JsonArray(emptyList()))
+        input = if (type == "userMessage") raw.array("content") else JsonArray(emptyList()),
+        commandOutputOmitted = type == "commandExecution" && raw["_commandOutputOmitted"]?.jsonPrimitive?.booleanOrNull == true)
 }
 
 // Decode text content blocks without exposing base64 media as pages of JSON.
@@ -176,6 +179,10 @@ fun reduceTimeline(items: List<TimelineItem>, method: String, params: JsonObject
     val delta = params.text("delta")
     if (method !in listOf("item/agentMessage/delta", "item/commandExecution/outputDelta", "item/reasoning/summaryTextDelta")) return items
     val index = items.indexOfFirst { it.id == id }
+    if (method == "item/commandExecution/outputDelta" && params["_commandOutputOmitted"]?.jsonPrimitive?.booleanOrNull == true) {
+        if (index < 0) return items + TimelineItem(id, "commandExecution", "", turnId = turnId, turnStatus = "inProgress", commandOutputOmitted = true)
+        return items.mapIndexed { i, item -> if (i == index) item.copy(commandOutputOmitted = true) else item }
+    }
     if (index < 0) return items + TimelineItem(id, if (method.contains("commandExecution")) "commandExecution" else if (method.contains("reasoning")) "reasoning" else "agentMessage", delta, turnId = turnId, turnStatus = "inProgress")
     return items.mapIndexed { i, item -> if (i == index) item.copy(text = item.text + delta) else item }
 }

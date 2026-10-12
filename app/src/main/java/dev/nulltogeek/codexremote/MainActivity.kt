@@ -538,7 +538,10 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (item.detail.isNotBlank()) SelectionContainer { Text(item.detail, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
                 val visible = item.text.take(visibleLimit)
-                if (visible.isNotBlank() && !finalChanges) {
+                if (item.commandOutputOmitted) Text("Command output was not downloaded. Enable Load command output in Settings to fetch it.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.testTag("command-output-omitted:${item.id}"))
+                if (visible.isNotBlank() && !finalChanges && !item.commandOutputOmitted) {
                     if (!tool && !user) MarkdownView(visible)
                     else if (item.type == "commandExecution") CodeBlock(item.text, "terminal", collapsible = false)
                     else SelectionContainer { Text(visible, style = if (tool) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, fontFamily = if (tool) FontFamily.Monospace else FontFamily.Default) }
@@ -593,6 +596,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         Text("ACCENT STYLE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("exchange", "ocean", "mint", "rose", "violet").forEach { accent -> FilterChip(selected = state.accent == accent, onClick = { vm.accent(accent) }, label = { Text(accent.replaceFirstChar { it.uppercase() }) }) } }
         Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Animations"); Text("Smooth screen and color transitions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; Switch(checked = state.motion, onCheckedChange = vm::motion) }
+        HorizontalDivider()
+        CommandOutputSettings(state.loadCommandOutput, state.commandOutputChanging, state.commandOutputMessage, vm::loadCommandOutput)
         HorizontalDivider()
         TaskNotificationSettings(state.taskNotifications, state.notificationMessage, change = { enabled ->
             when {

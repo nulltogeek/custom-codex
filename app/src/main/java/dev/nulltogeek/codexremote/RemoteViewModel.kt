@@ -16,7 +16,7 @@ import kotlinx.serialization.json.*
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
     private val store = LocalStore(application)
     private val rpc = RpcClient()
-    private val mutable = MutableStateFlow(ScreenState(endpoint = store.endpoint, username = store.username, theme = store.theme, accent = store.accent, motion = store.motion))
+    private val mutable = MutableStateFlow(ScreenState(endpoint = store.endpoint, username = store.username, theme = store.theme, accent = store.accent, motion = store.motion, loadCommandOutput = store.loadCommandOutput))
     val state: StateFlow<ScreenState> = mutable.asStateFlow()
     private var reconnect: Job? = null
     private var searchJob: Job? = null
@@ -24,6 +24,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var olderJob: Job? = null
     private val catalogMutex = kotlinx.coroutines.sync.Mutex()
     private val inputMutex = kotlinx.coroutines.sync.Mutex()
+    private val commandOutputMutex = kotlinx.coroutines.sync.Mutex()
     private val messageQueue = MessageQueue { endpoint, username, snapshot -> store.queue(endpoint, username, snapshot) }
     @Volatile private var queueStorageBlocked = false
     private val uploadJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
@@ -89,7 +90,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     val session = store.session()
                     if (session.isEmpty()) throw SessionExpiredException()
                     rpc.configure(store.endpoint, session)
-                    val snapshot = rpc.connect()
+                    val snapshot = commandOutputMutex.withLock { rpc.connect(mutable.value.loadCommandOutput) }
                     if (lastEpoch != snapshot.text("epoch")) mutable.update { it.copy(snapshotSequence = 0, itemSequences = emptyMap(), threadSequence = 0, statusSequence = 0, titleSequence = 0, pendingSequence = 0) }
                     lastEpoch = snapshot.text("epoch"); applySnapshot(snapshot)
                     checkAppUpdate(automatic = true)
@@ -125,7 +126,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         synchronized(uploadJobs) { uploadJobs.values.forEach { it.cancel() }; uploadJobs.clear() }
         TaskNotificationService.stop(getApplication())
         messageQueue.detach(); rpc.close(); store.signOut()
-        mutable.update { ScreenState(endpoint = store.endpoint, username = store.username, theme = it.theme, accent = it.accent, motion = it.motion, notice = notice) }
+        mutable.update { ScreenState(endpoint = store.endpoint, username = store.username, theme = it.theme, accent = it.accent, motion = it.motion, loadCommandOutput = it.loadCommandOutput, notice = notice) }
     }
     fun signOut() = action {
         disconnect()
@@ -165,6 +166,26 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun theme(value: String) { store.theme(value); mutable.update { it.copy(theme = value) } }
     fun accent(value: String) { store.accent(value); mutable.update { it.copy(accent = value) } }
     fun motion(value: Boolean) { store.motion(value); mutable.update { it.copy(motion = value) } }
+    fun loadCommandOutput(enabled: Boolean) {
+        if (mutable.value.commandOutputChanging) return
+        mutable.update { it.copy(commandOutputChanging = true, commandOutputMessage = "") }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                commandOutputMutex.withLock {
+                    store.loadCommandOutput(enabled)
+                    mutable.update { it.copy(loadCommandOutput = enabled) }
+                    if (rpc.status.value == "Connected") {
+                        try { rpc.setCommandOutput(enabled) }
+                        catch (e: Exception) { rpc.close(); throw e }
+                    }
+                }
+                if (enabled && rpc.status.value == "Connected") mutable.value.selectedChat?.id?.let { loadThread(it) }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                mutable.update { it.copy(commandOutputMessage = e.message ?: "Could not change command output downloads. Reconnect to retry.") }
+            } finally { mutable.update { it.copy(commandOutputChanging = false) } }
+        }
+    }
     private fun loadFavorites() {
         val current = mutable.value
         val (chats, projects) = store.favorites(current.endpoint, current.username)

@@ -209,6 +209,56 @@ class RpcClientTest {
         override fun close() { server.shutdown() }
     }
 
+    @Test fun commandPreferenceIsNegotiatedBeforeReplayAndAgainOnReconnect() = runBlocking {
+        Host().use { host ->
+            val preferences = CopyOnWriteArrayList<Boolean>()
+            host.handle = { ws, request ->
+                assertEquals("bridge/commandOutput", request.text("method"))
+                preferences.add(request.obj("params")["loadCommandOutput"]!!.jsonPrimitive.boolean)
+                host.reply(ws, request, request.obj("params"))
+            }
+            val rpc = host.client()
+            try {
+                rpc.connect(loadCommandOutput = false)
+                assertEquals(listOf(false), preferences.toList())
+                assertEquals("false", host.subscriptions.last().text("loadCommandOutput"))
+                rpc.setCommandOutput(true); assertEquals(listOf(false, true), preferences.toList())
+                rpc.close(); rpc.connect(loadCommandOutput = false)
+                assertEquals(listOf(false, true, false), preferences.toList())
+                assertEquals(2, host.subscriptions.size)
+            } finally { rpc.close() }
+        }
+    }
+    @Test fun olderHostCannotSubscribeOrReplayWhenDownloadsAreExplicitlyDisabled() = runBlocking {
+        Host().use { host ->
+            host.handle = { ws, request ->
+                ws.send(buildJsonObject {
+                    put("id", request.getValue("id")); put("error", buildJsonObject { put("code", -32601); put("message", "Unknown method") })
+                }.toString())
+            }
+            val rpc = host.client()
+            try {
+                val failure = runCatching { rpc.connect(loadCommandOutput = false) }.exceptionOrNull()
+                assertTrue(failure is CommandOutputUnsupportedException)
+                assertTrue(failure!!.message!!.contains("Update the computer's server"))
+                assertTrue(host.subscriptions.isEmpty()); assertNotEquals("Connected", rpc.status.value)
+                // Notifications retain old-server compatibility only while the user allows output.
+                rpc.connect(loadCommandOutput = false, allowLegacyCommandOutput = true)
+                assertEquals(1, host.subscriptions.size)
+            } finally { rpc.close() }
+        }
+    }
+    @Test fun missingPreferenceAcknowledgementCannotSilentlyDownloadOutput() = runBlocking {
+        Host().use { host ->
+            val rpc = host.client()
+            try {
+                val failure = runCatching { rpc.connect(loadCommandOutput = false) }.exceptionOrNull()
+                assertTrue(failure is CommandOutputUnsupportedException)
+                assertTrue(host.subscriptions.isEmpty())
+            } finally { rpc.close() }
+        }
+    }
+
     @Test fun concurrentCallsReceiveTheirOwnOutOfOrderResponses() = runBlocking {
         Host().use { host ->
             val requests = LinkedBlockingQueue<Pair<WebSocket, JsonObject>>()

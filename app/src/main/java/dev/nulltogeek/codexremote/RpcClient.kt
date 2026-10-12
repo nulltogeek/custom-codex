@@ -18,6 +18,7 @@ import java.io.File
 class SessionExpiredException : IOException("Your session expired. Please sign in again.")
 class RpcException(val code: Int, message: String) : IOException(message)
 class HostHttpException(val statusCode: Int) : IOException("Host returned HTTP $statusCode")
+class CommandOutputUnsupportedException : IOException("Update the computer's server to disable command output downloads.")
 data class LoginSession(val token: String, val username: String, val expiresAt: Long)
 
 class RpcClient {
@@ -168,7 +169,7 @@ class RpcClient {
                 body.byteStream().use { input -> receiveAppUpdate(input, directory, update, progress) }
             }
     }
-    suspend fun connect(): JsonObject {
+    suspend fun connect(loadCommandOutput: Boolean = true, allowLegacyCommandOutput: Boolean = false): JsonObject {
         close(); status.value = "Connecting"; val ready = CompletableDeferred<Unit>(); opened = ready
         val request = Request.Builder().url(endpoint.replaceFirst("https://", "wss://").replaceFirst("http://", "ws://") + "/v1/rpc")
             .header("Authorization", "Bearer $token").build()
@@ -205,10 +206,25 @@ class RpcClient {
         withTimeout(20000) { ready.await() }
         call("initialize", buildJsonObject {})
         socket?.send("{\"method\":\"initialized\",\"params\":{}}")
-        val snapshot = call("bridge/subscribe", buildJsonObject { put("epoch", epoch); put("sequence", sequence) })
+        // Negotiate before subscribing so an older server cannot replay large outputs
+        // when the phone explicitly requested reduced downloads.
+        if (!loadCommandOutput) {
+            try { setCommandOutput(false) }
+            catch (e: CommandOutputUnsupportedException) {
+                if (!allowLegacyCommandOutput) { close(); throw e }
+            }
+        }
+        val snapshot = call("bridge/subscribe", buildJsonObject {
+            put("epoch", epoch); put("sequence", sequence); put("loadCommandOutput", loadCommandOutput)
+        })
         val cursor = subscriptionCursor(epoch, sequence, snapshot)
         epoch = cursor.first; sequence = cursor.second
         status.value = "Connected"; return snapshot
+    }
+    suspend fun setCommandOutput(enabled: Boolean) {
+        val response = try { call("bridge/commandOutput", buildJsonObject { put("loadCommandOutput", enabled) }) }
+        catch (e: RpcException) { if (e.code == -32601) throw CommandOutputUnsupportedException() else throw e }
+        if (response["loadCommandOutput"]?.jsonPrimitive?.booleanOrNull != enabled) throw CommandOutputUnsupportedException()
     }
     suspend fun call(method: String, params: JsonObject = buildJsonObject {}): JsonObject {
         val id = ids.incrementAndGet(); val result = CompletableDeferred<JsonObject>(); pending[id] = result

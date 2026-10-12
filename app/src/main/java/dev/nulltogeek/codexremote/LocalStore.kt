@@ -20,6 +20,7 @@ class LocalStore(private val context: Context) {
     val accent get() = prefs.getString("accent", "exchange").orEmpty()
     val taskNotifications get() = prefs.getBoolean("taskNotifications", false)
     val motion get() = prefs.getBoolean("motion", true)
+    val loadCommandOutput get() = prefs.getBoolean("loadCommandOutput", true)
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey("codex_remote_pairing", null) as? SecretKey)?.let { return it }
@@ -56,6 +57,7 @@ class LocalStore(private val context: Context) {
         check(prefs.edit().putString("notified:" + favoriteKey(endpoint, username), JsonArray(keys.takeLast(256).map(::JsonPrimitive)).toString()).commit())
     }
     fun motion(value: Boolean) { prefs.edit { putBoolean("motion", value) } }
+    fun loadCommandOutput(value: Boolean) { prefs.edit { putBoolean("loadCommandOutput", value) } }
     fun queue(endpoint: String, username: String): QueueSnapshot = try {
         parseQueue(WireJson.parseToJsonElement(prefs.getString("queue:" + favoriteKey(endpoint, username), "{}").orEmpty()).jsonObject)
     } catch (_: Exception) { QueueSnapshot() }
