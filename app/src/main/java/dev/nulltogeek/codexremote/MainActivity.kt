@@ -440,13 +440,17 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 }
             }
         }
-        ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval, loadImage = vm::attachmentImage, answerQuestion = answerQuestion)
+        ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval, loadImage = vm::attachmentImage, answerQuestion = answerQuestion, editMessage = vm::editSentMessage)
         ChatComposer(state, vm, onPick = { picker.launch(it) })
     }
+    state.sentMessageEdit?.let { edit -> SentMessageEditDialog(edit.copy(error = edit.error ?: state.notice), state.connection == "Connected",
+        state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty(), vm::sentEditText,
+        vm::removeSentEditAttachment, vm::resendEditedMessage, vm::interrupt, vm::cancelSentEdit, stopPending = state.loading) }
 }
 
 @Composable internal fun ChatTimeline(state: ScreenState, modifier: Modifier = Modifier, loadOlder: () -> Unit, showDiff: (Change) -> Unit, approval: (PendingInput) -> Unit,
-    loadImage: suspend (String) -> ByteArray = { error("Image unavailable") }, answerQuestion: (TimelineItem) -> Unit = {}) {
+    loadImage: suspend (String) -> ByteArray = { error("Image unavailable") }, answerQuestion: (TimelineItem) -> Unit = {},
+    editMessage: ((TimelineItem) -> Unit)? = null) {
     val listState = remember(state.selectedChat?.id) { LazyListState() }
     val followTail by remember(listState) { derivedStateOf { !listState.canScrollBackward } }
     val scope = rememberCoroutineScope()
@@ -462,7 +466,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     Box(modifier.fillMaxWidth()) {
         LazyColumn(Modifier.fillMaxSize().testTag("history-list"), state = listState, reverseLayout = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(messages.asReversed(), key = { it.id }, contentType = { it.type }) { item ->
-                MessageItem(item, showDiff, loadImage, answerQuestion, item.id in state.answeredInputs || questionAnswered(item, state.timeline))
+                MessageItem(item, showDiff, loadImage, answerQuestion, item.id in state.answeredInputs || questionAnswered(item, state.timeline),
+                    editMessage = editMessage, canEdit = !state.sending && !state.loading && !state.uploading && !state.uncertainSend && state.selectedChat?.archived != true)
             }
             if (state.timeline.isEmpty() && !state.historyAvailable && state.selectedChat?.preview?.isNotBlank() == true) item { EmptyState("Earlier messages unavailable", "New messages will appear here. You can continue this conversation.") }
             else if (state.timeline.isEmpty()) item { EmptyState(if (state.chatMode == "chat") "A new conversation" else "Ready to build", if (state.chatMode == "chat") "Ask a question, share an image, or discuss an idea." else "Describe the work, attach a file, and choose how Codex can access your computer.") }
@@ -490,7 +495,8 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 }
 
 @Composable internal fun MessageItem(item: TimelineItem, showDiff: (Change) -> Unit, loadImage: suspend (String) -> ByteArray,
-    answerQuestion: (TimelineItem) -> Unit = {}, answered: Boolean = false) {
+    answerQuestion: (TimelineItem) -> Unit = {}, answered: Boolean = false,
+    editMessage: ((TimelineItem) -> Unit)? = null, canEdit: Boolean = true) {
     var visibleLimit by rememberSaveable(item.id) { mutableIntStateOf(6000) }
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
     var copied by remember(item.id, item.text) { mutableStateOf(false) }
@@ -515,6 +521,10 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 }
             } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(label, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                if (user && editMessage != null && item.turnId.isNotBlank()) IconButton(
+                    onClick = { editMessage(item) }, enabled = canEdit,
+                    modifier = Modifier.size(48.dp).testTag("edit-message:${item.id}")
+                ) { Icon(Icons.Outlined.Edit, "Edit your message", Modifier.size(18.dp)) }
                 if (item.type in listOf("userMessage", "agentMessage") && item.text.isNotBlank()) IconButton(
                     onClick = { clipboard.setText(AnnotatedString(item.text)); copied = true },
                     modifier = Modifier.size(48.dp).testTag("copy-message:${item.id}")

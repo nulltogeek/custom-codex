@@ -65,3 +65,21 @@ test('broker reports writer conflicts without retrying or forking and routes exp
   broker.accept('phone', { id: 3, method: 'thread/fork', params: { threadId: 'desktop', sandbox: 'danger-full-access' } });
   assert.equal(upstream.length, 2); assert.equal(phone.at(-1).error.code, -32602);
 });
+
+
+test('sent-message editing preserves the exclusive fork boundary and never starts a turn', () => {
+  const upstream = [], phone = [];
+  const broker = new Broker({ upstream: message => upstream.push(message), desktop() {} });
+  broker.ready = true; broker.initResult = {}; broker.addClient('phone', message => phone.push(message));
+  broker.accept('phone', { id: 1, method: 'thread/fork', params: {
+    threadId: 'source', beforeTurnId: 'edited-turn', mobileMode: 'chat', accessMode: 'full', excludeTurns: true,
+  } });
+  assert.equal(upstream.length, 1); assert.equal(upstream[0].method, 'thread/fork');
+  assert.equal(upstream[0].params.beforeTurnId, 'edited-turn');
+  assert.equal(upstream[0].params.deferGoalContinuation, true);
+  assert.equal(upstream[0].params.sandbox, 'read-only');
+  assert.equal(upstream[0].params.input, undefined);
+  broker.receive({ id: upstream[0].id, result: { thread: { id: 'copy' } } });
+  assert.equal(phone.at(-1).result.thread.id, 'copy');
+  assert.equal(upstream.length, 1);
+});

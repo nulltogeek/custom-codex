@@ -26,7 +26,8 @@ data class Chat(val id: String, val title: String, val preview: String, val cwd:
 data class TimelineItem(val id: String, val type: String, val text: String, val detail: String = "",
     val status: String = "", val changes: List<Change> = emptyList(), val turnId: String = "",
     val phase: String = "", val turnStatus: String = "", val images: List<TimelineImage> = emptyList(),
-    val delivery: String = "", val questions: List<InputQuestion> = emptyList())
+    val delivery: String = "", val questions: List<InputQuestion> = emptyList(),
+    val input: JsonArray = JsonArray(emptyList()))
 data class TimelineImage(val source: String, val name: String = "Attached image")
 data class Change(val path: String, val diff: String)
 data class PendingInput(val id: String, val method: String, val params: JsonObject)
@@ -63,6 +64,7 @@ data class ScreenState(
     val statusSequence: Long = 0, val titleSequence: Long = 0, val pendingSequence: Long = 0,
     val attachments: List<Attachment> = emptyList(), val uploading: Boolean = false,
     val chatMode: String = "codex", val accessMode: String = "host", val historyAvailable: Boolean = true,
+    val sentMessageEdit: SentMessageEdit? = null,
     val accent: String = "exchange", val motion: Boolean = true,
     val activeTurnId: String = "",
     val appUpdate: AppUpdate? = null, val updateChecking: Boolean = false,
@@ -119,7 +121,8 @@ fun parseItem(raw: JsonObject, turnId: String = "", turnStatus: String = ""): Ti
     if (text.isEmpty() && type !in listOf("agentMessage", "userMessage")) text = raw.text("status").ifEmpty { type }
     return TimelineItem(raw.text("id"), type, text, raw.text("command").ifEmpty { raw.text("server").ifEmpty { raw.text("namespace").ifEmpty { raw.text("name") } } }, raw.text("status"), changes,
         turnId = turnId, phase = raw.text("phase"), turnStatus = turnStatus, images = images,
-        delivery = raw.text("delivery"), questions = if (type == "agentMessage") parseAsyncQuestions(raw) else emptyList())
+        delivery = raw.text("delivery"), questions = if (type == "agentMessage") parseAsyncQuestions(raw) else emptyList(),
+        input = if (type == "userMessage") raw.array("content") else JsonArray(emptyList()))
 }
 
 // Decode text content blocks without exposing base64 media as pages of JSON.

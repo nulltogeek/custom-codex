@@ -98,6 +98,13 @@ class LocalStore(private val context: Context) {
         WireJson.parseToJsonElement(prefs.getString("attachments:$id", "[]").orEmpty()).jsonArray.map { parseAttachment(it.jsonObject) }
     } catch (_: Exception) { emptyList() }
     fun attachments(id: String, value: List<Attachment>) { prefs.edit { putString("attachments:$id", JsonArray(value.map { it.toJson() }).toString()) } }
+    @android.annotation.SuppressLint("UseKtx")
+    fun editedDraft(id: String, input: JsonArray, mode: String, access: String) {
+        val text = input.mapNotNull { it as? JsonObject }.filter { it.text("type") == "text" }.joinToString("\n") { it.text("text") }
+        check(prefs.edit().putString("draft:$id", text)
+            .putString("attachments:$id", JsonArray(sentAttachments(input).map { it.toJson() }).toString())
+            .putString("mode:$id", mode).putString("access:$id", access).commit()) { "Could not save the edited message. Try again." }
+    }
     fun forgetChat(id: String) { prefs.edit { remove("draft:$id"); remove("attachments:$id"); remove("mode:$id"); remove("access:$id") } }
     fun draft(id: String): String = synchronized(prefs) { prefs.getString("draft:$id", "").orEmpty() }
     fun draft(id: String, text: String) { synchronized(prefs) { prefs.edit { putString("draft:$id", text) } } }
