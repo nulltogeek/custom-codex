@@ -509,18 +509,19 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         mutable.update { it.copy(queueBlocked = false) }
         messageQueue.restore(current.endpoint, current.username, store.queue(current.endpoint, current.username))
     }
-    private fun queueAction(block: () -> Unit) {
-        try { block() } catch (e: Exception) {
+    private fun queueAction(block: () -> Unit): Boolean {
+        return try { block(); true } catch (e: Exception) {
             queueStorageBlocked = true
             mutable.update { it.copy(queueBlocked = true, notice = e.message ?: "Could not update the queue") }
+            false
         }
     }
     fun editQueued(id: String, text: String, attachments: List<Attachment>) = queueAction { messageQueue.edit(id, text, attachments) }
-    fun moveQueued(id: String, offset: Int) = queueAction { messageQueue.move(id, offset) }
-    fun removeQueued(id: String) = queueAction { messageQueue.remove(id) }
-    fun retryQueued(id: String) = queueAction { messageQueue.retry(id) }
+    fun moveQueued(id: String, offset: Int) { queueAction { messageQueue.move(id, offset) } }
+    fun removeQueued(id: String) { queueAction { messageQueue.remove(id) } }
+    fun retryQueued(id: String) { queueAction { messageQueue.retry(id) } }
     fun pauseQueue(chatId: String) = queueAction { messageQueue.pause(chatId) }
-    fun resumeQueue(chatId: String) = queueAction { messageQueue.resume(chatId); queueStorageBlocked = false; mutable.update { it.copy(queueBlocked = false) } }
+    fun resumeQueue(chatId: String) { queueAction { messageQueue.resume(chatId); queueStorageBlocked = false; mutable.update { it.copy(queueBlocked = false) } } }
     private suspend fun dispatchQueuedMessages() = inputMutex.withLock {
         val initial = mutable.value
         if (!foreground || queueStorageBlocked || !initial.signedIn || initial.connection != "Connected" || initial.sending) return@withLock

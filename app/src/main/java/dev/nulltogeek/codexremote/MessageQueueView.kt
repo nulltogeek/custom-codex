@@ -14,14 +14,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-@Composable internal fun MessageQueueView(state: ScreenState, edit: (QueuedMessage, String, List<Attachment>) -> Unit,
-    move: (String, Int) -> Unit, remove: (String) -> Unit, pause: (String) -> Unit, resume: (String) -> Unit,
+@Composable internal fun MessageQueueView(state: ScreenState, edit: (QueuedMessage, String, List<Attachment>) -> Boolean,
+    move: (String, Int) -> Unit, remove: (String) -> Unit, pause: (String) -> Boolean, resume: (String) -> Unit,
     retry: (String) -> Unit) {
     val chatId = state.selectedChat?.id ?: return
     val messages = state.queuedMessages.filter { it.chatId == chatId }
     if (messages.isEmpty()) return
     var expanded by rememberSaveable(chatId) { mutableStateOf(false) }
-    var editing by remember(chatId) { mutableStateOf<QueuedMessage?>(null) }
+    var editingId by remember(chatId) { mutableStateOf<String?>(null) }
     var retrying by remember(chatId) { mutableStateOf<QueuedMessage?>(null) }
     val paused = chatId in state.pausedQueues || state.queueBlocked
     val uncertain = messages.any { it.delivery == "uncertain" }
@@ -32,7 +32,12 @@ import androidx.compose.ui.unit.dp
                 Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
                     if (expanded) "Collapse message queue" else "Expand message queue")
             }
-            TextButton(onClick = { if (paused) resume(chatId) else pause(chatId) }, enabled = !uncertain) {
+            TextButton(onClick = {
+                if (paused) resume(chatId) else if (pause(chatId)) {
+                    expanded = true
+                    editingId = messages.firstOrNull { it.delivery == "queued" }?.id
+                }
+            }, enabled = !uncertain) {
                 Text(if (paused) "Resume queue" else "Pause queue", style = MaterialTheme.typography.labelMedium)
             }
         }
@@ -60,7 +65,7 @@ import androidx.compose.ui.unit.dp
                             }
                             if (message.delivery == "uncertain") IconButton(onClick = { retrying = message }) {
                                 Icon(Icons.Outlined.Refresh, "Review retry for queued message ${index + 1}", Modifier.size(18.dp))
-                            } else IconButton(onClick = { pause(chatId); editing = message }, enabled = message.delivery == "queued") {
+                            } else IconButton(onClick = { if (pause(chatId)) editingId = message.id }, enabled = message.delivery == "queued") {
                                 Icon(Icons.Outlined.Edit, "Edit queued message ${index + 1}", Modifier.size(18.dp))
                             }
                             IconButton(onClick = { remove(message.id) }, enabled = message.delivery != "sending") {
@@ -72,10 +77,12 @@ import androidx.compose.ui.unit.dp
             } }
         }
     }
+    val editing = messages.find { it.id == editingId && it.delivery == "queued" }
+    LaunchedEffect(editingId, editing?.id) { if (editingId != null && editing == null) editingId = null }
     editing?.let { message ->
         var text by remember(message.id) { mutableStateOf(message.text) }
         var attachments by remember(message.id) { mutableStateOf(message.attachments) }
-        AlertDialog(onDismissRequest = { editing = null }, title = { Text("Edit queued message") },
+        AlertDialog(onDismissRequest = { editingId = null }, title = { Text("Edit queued message") },
             text = { Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
                 OutlinedTextField(text, { text = it }, label = { Text("Queued message") }, modifier = Modifier.fillMaxWidth(), maxLines = 6)
                 attachments.forEach { file -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -83,9 +90,11 @@ import androidx.compose.ui.unit.dp
                     IconButton(onClick = { attachments = attachments.filterNot { it.id == file.id } }) { Icon(Icons.Outlined.Close, "Remove queued attachment ${file.name}") }
                 } }
                 Text("Queue stays paused until you tap Resume queue.", style = MaterialTheme.typography.bodySmall)
-            } }, confirmButton = { TextButton(onClick = { edit(message, text, attachments); editing = null },
+                if (state.queueBlocked) Text(state.notice ?: "Could not save the queue. Try saving again.",
+                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            } }, confirmButton = { TextButton(onClick = { if (edit(message, text, attachments)) editingId = null },
                 enabled = text.isNotBlank() || attachments.isNotEmpty()) { Text("Save message") } },
-            dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } })
+            dismissButton = { TextButton(onClick = { editingId = null }) { Text("Cancel") } })
     }
     retrying?.let { message -> AlertDialog(onDismissRequest = { retrying = null }, title = { Text("Retry this queued message?") },
         text = { Text("Check chat history first. If the message was already delivered, remove it from the queue. Retrying could send it twice. The queue will stay paused until you resume it.") },

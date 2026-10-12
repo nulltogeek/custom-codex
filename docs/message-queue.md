@@ -5,10 +5,14 @@ the active turn. When work finishes, queued messages start new turns in order.
 Sending while this chat already has a queue appends to that queue. Stop sits
 beside Send and pauses the chat's queue before stopping work.
 
-Tap the queued-message count above the composer to expand the queue. Use the
+Tap **Pause queue** to expand the queue and open the first waiting message for
+editing. Saving or cancelling leaves it paused until you tap **Resume queue**.
+You can also tap the queued-message count above the composer to expand the queue. Use the
 arrows to move a message up or down, the pencil to edit its text or remove an
 attachment, and the close button to remove it. Editing pauses the queue; use
 **Resume queue** when ready. A message being sent cannot be edited or removed.
+If pausing cannot be saved, the editor does not open; if saving an edit fails,
+the editor keeps your draft and shows the error so you can retry.
 Queues keep the model, effort, chat mode and access setting chosen when added.
 Each chat can hold up to 20 queued messages, including uploaded attachments.
 
