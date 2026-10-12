@@ -1,0 +1,2 @@
+Your messages now appear on the right and Codex answers on the left.
+Bubble positions stay the same in right-to-left app layouts, while text keeps its natural reading direction.

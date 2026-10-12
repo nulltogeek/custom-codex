@@ -10,8 +10,8 @@ android {
         applicationId = "dev.nulltogeek.codexremote"
         minSdk = 30
         targetSdk = 35
-        versionCode = 19
-        versionName = "0.7.11"
+        versionCode = 20
+        versionName = "0.7.12"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
