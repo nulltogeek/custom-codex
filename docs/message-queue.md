@@ -18,9 +18,21 @@ Each chat can hold up to 20 queued messages, including uploaded attachments.
 
 The queue is saved on this phone, separately for each server and account. It
 sends while this app is open and connected, including queues for other chats.
+Switching projects or reading another chat does not pause the queue or redirect
+its messages. The account-wide dispatcher checks each chat independently; a busy
+or paused chat does not block a ready queue in another project. Background queue
+sends do not set the displayed chat's Send button to busy.
+Temporary connection loss during a status check leaves messages waiting for the
+next connected check. It does not pause them when no send was attempted. Errors
+after sending still require delivery review to prevent duplicates.
 After relaunching or signing in again, saved queues require **Resume queue**.
 Failed or interrupted turns pause the queue. A rejected send retains its message
 for review rather than moving on to the next queued message.
+Failure/stop notifications pause only existing queues, from the current backend,
+and only if newer than the queue's creation or last explicit Resume. Delayed
+notifications cannot undo a Resume or create a pause for a future queue. A new
+failure includes its reason in the expanded queue. Previously saved paused
+queues still need **Resume queue**; navigation never overrides a deliberate pause.
 
 If a request loses its delivery confirmation, the queue stays paused. Check chat
 history and remove the queued message if it was delivered. Otherwise, use its
@@ -32,3 +44,18 @@ and never automatically retries uncertain delivery.
 The sender reads live thread status before starting each turn. It never uses
 `turn/steer` for queued messages. It retains the existing runtime ownership checks;
 a chat owned by another writer stays queued and paused if ownership is rejected.
+
+Regression verification for switching projects: `QueueDispatchTest` exercises
+navigation during pending status reads, concurrent busy/paused projects, sending
+to the original chat with saved options, connectivity/account guards, lost
+acknowledgements, delayed completion notifications and backend epoch changes.
+Verified with 171 passing JVM tests, Android lint, debug/release APK assembly
+and instrumentation APK compilation:
+
+```sh
+./gradlew --offline --no-daemon -PcodexGoogleCdn=true \
+  :app:testDebugUnitTest :app:lintDebug :app:assembleDebug \
+  :app:assembleRelease :app:assembleDebugAndroidTest
+```
+
+Device navigation tests and app update publication remain unverified/pending.

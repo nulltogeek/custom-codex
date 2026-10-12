@@ -717,7 +717,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         state.draft, state.attachments, state.chatMode, state.accessMode, state.selectedModel, state.selectedEffort)
     private fun enqueueDraft(snapshot: ScreenState) {
         val chatId = requireNotNull(snapshot.selectedChat).id
-        messageQueue.add(queuedDraft(snapshot))
+        messageQueue.add(queuedDraft(snapshot), QueueEventCursor(rpc.epoch, rpc.sequence))
         val cleared = store.clearSentDraft(chatId, snapshot.draft)
         val attachmentIds = snapshot.attachments.map { it.id }.toSet()
         store.attachments(chatId, store.attachments(chatId).filter { it.id !in attachmentIds })
@@ -744,49 +744,32 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun pauseQueue(chatId: String) = queueAction { messageQueue.pause(chatId) }
     fun resumeQueue(chatId: String) {
         if (messageQueue.state.value.messages.any { it.chatId == chatId && it.delivery == "uncertain" }) return
-        queueAction { messageQueue.resume(chatId); queueStorageBlocked = false; mutable.update { it.copy(queueBlocked = false).resolveInfoNotice(NoticeKey(NoticeKind.QueueStorage)) } }
+        queueAction { messageQueue.resume(chatId, QueueEventCursor(rpc.epoch, rpc.sequence)); queueStorageBlocked = false; mutable.update { it.copy(queueBlocked = false).resolveInfoNotice(NoticeKey(NoticeKind.QueueStorage)) } }
     }
     private suspend fun dispatchQueuedMessages() = inputMutex.withLock {
         val initial = mutable.value
-        if (!foreground || queueStorageBlocked || !initial.signedIn || initial.connection != "Connected" || initial.sending) return@withLock
-        val candidates = messageQueue.state.value.messages.distinctBy { it.chatId }
-            .filter { it.delivery == "queued" && it.chatId !in messageQueue.state.value.pausedChats }
-        for (candidate in candidates) {
-            var ticket: QueueTicket? = null
-            var sendClaimed = false
-            var attempted = false
-            var acknowledged = false
+        val sessionIdentity = store.sessionIdentity
+        fun sameAccount(): Boolean {
+            val current = mutable.value
+            return current.signedIn && current.endpoint == initial.endpoint && current.username == initial.username &&
+                store.sessionIdentity == sessionIdentity
+        }
+        dispatchMessageQueue(messageQueue, rpc::call, canDispatch = {
+            val current = mutable.value
+            foreground && !queueStorageBlocked && sameAccount() && current.connection == "Connected" && !current.sending
+        }, sameAccount = ::sameAccount, onAccepted = { candidate ->
             try {
-                submitQueuedMessage(candidate, rpc::call, allowFailedTurn = candidate.chatId in messageQueue.state.value.resumedChats) {
-                    val current = mutable.value
-                    if (!foreground || !current.signedIn || current.connection != "Connected" || current.sending ||
-                        current.endpoint != initial.endpoint || current.username != initial.username ||
-                        !mutable.compareAndSet(current, current.copy(sending = true))) throw QueueWaitingException()
-                    sendClaimed = true
-                    ticket = messageQueue.claim(candidate) ?: throw QueueWaitingException()
-                    attempted = true
-                }
-                acknowledged = true
-                messageQueue.complete(requireNotNull(ticket))
                 if (mutable.value.selectedChat?.id == candidate.chatId) loadThread(candidate.chatId)
-                break
             } catch (e: Exception) {
                 if (e is CancellationException && e !is TimeoutCancellationException) throw e
-                if (e is QueueWaitingException) continue
-                if (initial.endpoint == mutable.value.endpoint && initial.username == mutable.value.username) {
-                    if (acknowledged && messageQueue.state.value.messages.none { it.id == candidate.id }) {
-                        mutable.update { it.withInfoNotice(NoticeKey(NoticeKind.History, candidate.chatId),
-                            "Queued message accepted. History refresh is temporarily unavailable.") }
-                    } else {
-                        val uncertain = acknowledged || uncertainDelivery(attempted, acknowledged, e)
-                        val error = if (uncertain) "Check chat history before retrying: delivery could not be confirmed." else e.message ?: "Queued send failed"
-                        ticket?.let { messageQueue.fail(it, error, uncertain) } ?: messageQueue.reject(candidate, error)
-                        mutable.update { it.withInfoNotice(NoticeKey(NoticeKind.QueueDelivery, candidate.chatId), "Queued message paused: $error") }
-                    }
-                }
-                if (e is SessionExpiredException) { disconnect(); clearSession(e.message); break }
-            } finally { if (sendClaimed) mutable.update { it.copy(sending = false) } }
-        }
+                if (sameAccount()) mutable.update { it.withInfoNotice(NoticeKey(NoticeKind.History, candidate.chatId),
+                    "Queued message accepted. History refresh is temporarily unavailable.") }
+                if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+            }
+        }, onRejected = { candidate, error, cause ->
+            mutable.update { it.withInfoNotice(NoticeKey(NoticeKind.QueueDelivery, candidate.chatId), "Queued message paused: $error") }
+            if (cause is SessionExpiredException) { disconnect(); clearSession(cause.message) }
+        })
     }
     fun continueInNewChat() {
         val source = mutable.value
@@ -1077,8 +1060,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             state
         }
         completedChat?.takeIf { it == mutable.value.selectedChat?.id }?.let { id -> action { loadThread(id) } }
-        events.filter { it.text("method") == "turn/completed" && it.obj("params").obj("turn").text("status") in listOf("failed", "interrupted") }
-            .forEach { event -> pauseQueue(event.obj("params").text("threadId")) }
+        events.filter { it.text("method") == "turn/completed" }.forEach { event -> queueAction { messageQueue.pauseForCompletion(event, lastEpoch) } }
         if (events.any { it.text("method") == "thread/deleted" && it.text("_bridgeEpoch") == lastEpoch } && canRefreshHistory(mutable.value)) refresh()
         if (events.any { it.text("method").startsWith("thread/") }) refreshFavoriteSummaries()
         if (events.any { it.text("method") == "project/changed" }) action { delay(100); val inventory = rpc.get("/v1/projects"); cachedInventory = inventory; applyInventory(inventory) }

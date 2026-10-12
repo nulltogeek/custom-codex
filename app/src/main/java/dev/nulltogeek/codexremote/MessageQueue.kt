@@ -10,6 +10,7 @@ data class QueuedMessage(val id: String, val chatId: String, val text: String,
 data class QueueSnapshot(val messages: List<QueuedMessage> = emptyList(), val pausedChats: Set<String> = emptySet(),
     val resumedChats: Set<String> = emptySet())
 internal data class QueueTicket(val generation: Long, val message: QueuedMessage)
+internal data class QueueEventCursor(val epoch: String, val sequence: Long)
 
 /** Save before publishing state, especially before a network mutation can begin. */
 internal class MessageQueue(private val save: (String, String, QueueSnapshot) -> Unit) {
@@ -18,21 +19,25 @@ internal class MessageQueue(private val save: (String, String, QueueSnapshot) ->
     private var endpoint = ""
     private var username = ""
     private var generation = 0L
+    private val completionCutoffs = mutableMapOf<String, QueueEventCursor>()
     @Synchronized fun restore(endpoint: String, username: String, saved: QueueSnapshot) {
         generation++; this.endpoint = endpoint; this.username = username
+        completionCutoffs.clear()
         // Relaunch needs explicit Resume. An interrupted send must never retry automatically.
         mutable.value = saved.copy(messages = saved.messages.map {
             if (it.delivery == "sending") it.copy(delivery = "uncertain", error = "Check history before retrying: delivery could not be confirmed.") else it
         }, pausedChats = saved.pausedChats + saved.messages.map { it.chatId }, resumedChats = emptySet())
     }
-    @Synchronized fun detach() { generation++; endpoint = ""; username = ""; mutable.value = QueueSnapshot() }
+    @Synchronized fun detach() { generation++; endpoint = ""; username = ""; completionCutoffs.clear(); mutable.value = QueueSnapshot() }
     private fun write(next: QueueSnapshot) { save(endpoint, username, next); mutable.value = next }
-    @Synchronized fun add(message: QueuedMessage) {
+    @Synchronized fun add(message: QueuedMessage, cursor: QueueEventCursor? = null) {
         require(message.text.isNotBlank() || message.attachments.isNotEmpty()) { "Write a message or attach a file" }
         require(message.attachments.all { it.readyToSend }) { "Finish uploading attachments first" }
         require(state.value.messages.count { it.chatId == message.chatId } < 20) { "Queue up to 20 messages per chat" }
         require(state.value.messages.none { it.id == message.id })
+        val newQueue = state.value.messages.none { it.chatId == message.chatId }
         write(state.value.copy(messages = state.value.messages + message))
+        if (newQueue && cursor != null) completionCutoffs[message.chatId] = cursor
     }
     @Synchronized fun edit(id: String, text: String, attachments: List<Attachment>) {
         val old = state.value.messages.find { it.id == id && it.delivery == "queued" } ?: return
@@ -55,9 +60,25 @@ internal class MessageQueue(private val save: (String, String, QueueSnapshot) ->
         write(state.value.copy(messages = state.value.messages.filterNot { it.id == id && it.delivery != "sending" }))
     }
     @Synchronized fun pause(chatId: String) { write(state.value.copy(pausedChats = state.value.pausedChats + chatId, resumedChats = state.value.resumedChats - chatId)) }
-    @Synchronized fun resume(chatId: String) {
+    @Synchronized fun resume(chatId: String, cursor: QueueEventCursor? = null) {
         if (state.value.messages.any { it.chatId == chatId && it.delivery == "uncertain" }) return
         write(state.value.copy(pausedChats = state.value.pausedChats - chatId, resumedChats = state.value.resumedChats + chatId))
+        if (cursor != null) completionCutoffs[chatId] = cursor
+    }
+    @Synchronized fun pauseForCompletion(event: JsonObject, epoch: String) {
+        if (event.text("method") != "turn/completed" || epoch.isEmpty() || event.text("_bridgeEpoch") != epoch) return
+        val params = event.obj("params")
+        val status = params.obj("turn").text("status")
+        if (status !in listOf("failed", "interrupted")) return
+        val chatId = params.text("threadId")
+        if (state.value.messages.none { it.chatId == chatId }) return
+        val sequence = event["_bridgeSequence"]?.jsonPrimitive?.longOrNull ?: return
+        val cutoff = completionCutoffs[chatId]
+        if (cutoff?.epoch == epoch && sequence <= cutoff.sequence) return
+        val error = "Previous work ${if (status == "failed") "failed" else "was stopped"}. Review it, then resume the queue."
+        write(state.value.copy(pausedChats = state.value.pausedChats + chatId, resumedChats = state.value.resumedChats - chatId,
+            messages = state.value.messages.map { if (it.chatId == chatId && it.delivery == "queued") it.copy(error = error) else it }))
+        completionCutoffs[chatId] = QueueEventCursor(epoch, sequence)
     }
     @Synchronized fun retry(id: String) {
         write(state.value.copy(messages = state.value.messages.map { if (it.id == id && it.delivery == "uncertain") it.copy(delivery = "queued", error = "") else it }))
@@ -102,6 +123,55 @@ internal fun parseQueue(raw: JsonObject) = QueueSnapshot(raw.array("messages").m
 }, raw.array("pausedChats").map { it.jsonPrimitive.content }.toSet(), raw.array("resumedChats").map { it.jsonPrimitive.content }.toSet())
 
 internal class QueueWaitingException : Exception()
+
+/** Dispatch belongs to the account's queues, independently of the displayed chat/project. */
+internal suspend fun dispatchMessageQueue(queue: MessageQueue, call: suspend (String, JsonObject) -> JsonObject,
+    canDispatch: () -> Boolean, sameAccount: () -> Boolean,
+    onAccepted: suspend (QueuedMessage) -> Unit = {},
+    onRejected: (QueuedMessage, String, Exception) -> Unit = { _, _, _ -> }) {
+    if (!canDispatch()) return
+    val candidates = queue.state.value.messages.distinctBy { it.chatId }
+        .filter { it.delivery == "queued" && it.chatId !in queue.state.value.pausedChats }
+    for (candidate in candidates) {
+        if (!canDispatch()) return
+        var ticket: QueueTicket? = null
+        var claimStarted = false
+        var attempted = false
+        var acknowledged = false
+        var completed = false
+        try {
+            submitQueuedMessage(candidate, call, allowFailedTurn = candidate.chatId in queue.state.value.resumedChats) {
+                // Only account/connectivity and durable queue state guard a send.
+                // Navigation and live timeline updates cannot invalidate the claim.
+                if (!canDispatch()) throw QueueWaitingException()
+                claimStarted = true
+                ticket = queue.claim(candidate) ?: throw QueueWaitingException()
+                attempted = true
+            }
+            acknowledged = true
+            queue.complete(requireNotNull(ticket))
+            completed = true
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException && e !is kotlinx.coroutines.TimeoutCancellationException) throw e
+            if (e is QueueWaitingException) continue
+            // A disconnected or timed-out status read has not sent the message.
+            // Keep it queued for the next connected check rather than silently pausing it.
+            if (!claimStarted && ((e is java.io.IOException && e !is RpcException && e !is SessionExpiredException) ||
+                e is kotlinx.coroutines.TimeoutCancellationException)) return
+            if (sameAccount()) {
+                val uncertain = acknowledged || uncertainDelivery(attempted, acknowledged, e)
+                val error = if (uncertain) "Check chat history before retrying: delivery could not be confirmed." else e.message ?: "Queued send failed"
+                ticket?.let { queue.fail(it, error, uncertain) } ?: queue.reject(candidate, error)
+                onRejected(candidate, error, e)
+            }
+            if (e is SessionExpiredException) return
+        }
+        if (completed) {
+            if (sameAccount()) onAccepted(candidate)
+            return
+        }
+    }
+}
 
 /** Read live status and start a new turn; queued input can never steer running work. */
 internal suspend fun submitQueuedMessage(message: QueuedMessage, call: suspend (String, JsonObject) -> JsonObject,
