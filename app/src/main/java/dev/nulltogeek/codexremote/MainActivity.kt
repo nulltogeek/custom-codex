@@ -177,12 +177,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     Text("${state.connection} · saved history available", style = MaterialTheme.typography.labelMedium)
                 }
             }
-            state.notice?.let { message -> Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(message, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    IconButton(onClick = vm::noticeDismiss) { Icon(Icons.Outlined.Close, "Dismiss notice") }
-                }
-            } }
+            NoticeBanners(state, vm::noticeDismiss, vm::infoNoticeDismiss)
             if (state.writerConflict && state.selectedChat != null) ThreadWriterNotice(state, vm::continueInNewChat)
             val screenKey = when { !state.signedIn -> "login"; state.diff != null -> "diff"; state.selectedChat != null -> "chat:${state.selectedChat.id}"; else -> state.page }
             Crossfade(screenKey, Modifier.weight(1f), animationSpec = tween(if (state.motion) 160 else 0), label = "Screen transition") { screen -> when {

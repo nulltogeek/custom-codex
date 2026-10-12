@@ -90,7 +90,7 @@ import androidx.compose.ui.unit.dp
                     IconButton(onClick = { attachments = attachments.filterNot { it.id == file.id } }) { Icon(Icons.Outlined.Close, "Remove queued attachment ${file.name}") }
                 } }
                 Text("Queue stays paused until you tap Resume queue.", style = MaterialTheme.typography.bodySmall)
-                if (state.queueBlocked) Text(state.notice ?: "Could not save the queue. Try saving again.",
+                if (state.queueBlocked) Text(state.infoNotices[NoticeKey(NoticeKind.QueueStorage)] ?: state.notice ?: "Could not save the queue. Try saving again.",
                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             } }, confirmButton = { TextButton(onClick = { if (edit(message, text, attachments)) editingId = null },
                 enabled = text.isNotBlank() || attachments.isNotEmpty()) { Text("Save message") } },

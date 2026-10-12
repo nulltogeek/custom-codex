@@ -49,10 +49,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             connectIfForeground()
         }
         viewModelScope.launch {
-            rpc.status.collect { status -> mutable.update { it.copy(connection = status) } }
+            rpc.status.collect { status -> mutable.update { it.withConnectionStatus(status) } }
         }
         viewModelScope.launch {
-            messageQueue.state.collect { queue -> mutable.update { it.copy(queuedMessages = queue.messages, pausedQueues = queue.pausedChats) } }
+            messageQueue.state.collect { queue -> mutable.update { it.copy(queuedMessages = queue.messages, pausedQueues = queue.pausedChats).resolveQueueNotices(queue) } }
         }
         viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
@@ -61,7 +61,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 catch (e: Exception) {
                     if (e is CancellationException) throw e
                     queueStorageBlocked = true
-                    mutable.update { it.copy(queueBlocked = true, notice = "Queue paused: ${e.message}. Tap Resume queue after fixing the problem.") }
+                    mutable.update { it.copy(queueBlocked = true).withInfoNotice(NoticeKey(NoticeKind.QueueStorage), "Queue paused: ${e.message}. Tap Resume queue after fixing the problem.") }
                 }
             }
         }
@@ -99,7 +99,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     if (e is SessionExpiredException) { clearSession(e.message); break }
-                    mutable.update { it.copy(connection = "Offline", notice = e.message ?: "Cannot connect to host") }
+                    mutable.update { it.copy(connection = "Offline").withInfoNotice(NoticeKey(NoticeKind.Connection), e.message ?: "Cannot connect to host") }
                 }
                 if (foreground) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30000) }
             }
@@ -274,10 +274,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     if (mutable.value.catalogRevision != revision) return@withLock
                     cachedList = JsonArray(catalogRows(active, false) + catalogRows(archived, true))
                     mutable.update { if (it.catalogRevision != revision) it else it.copy(chats = mergeCatalogChats(emptyList(), cachedList.map { r -> parseChat(r.jsonObject, r.jsonObject.text("cachedArchived") == "true") }),
-                        activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }) }
+                        activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }).resolveInfoNotice(NoticeKey(NoticeKind.Search)) }
                     saveCache()
                 }
-            } catch (e: Exception) { if (e is CancellationException) throw e; mutable.update { it.copy(notice = "Search unavailable: ${e.message}") } }
+            } catch (e: Exception) { if (e is CancellationException) throw e; mutable.update { if (it.catalogRevision != revision) it else it.withInfoNotice(NoticeKey(NoticeKind.Search), "Search unavailable: ${e.message}") } }
         }
     }
     fun draft(text: String) {
@@ -287,6 +287,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun model(id: String) { mutable.update { it.copy(selectedModel = id, selectedEffort = it.models.find { m -> m.id == id }?.defaultEffort.orEmpty()) } }
     fun effort(value: String) { mutable.update { it.copy(selectedEffort = value) } }
     fun noticeDismiss() { mutable.update { it.copy(notice = null) } }
+    fun infoNoticeDismiss(key: NoticeKey) { mutable.update { it.resolveInfoNotice(key) } }
     fun showDiff(change: Change?) { mutable.update { it.copy(diff = change) } }
     suspend fun attachmentImage(source: String): ByteArray = rpc.downloadAttachmentImage(source)
     fun refresh() {
@@ -297,7 +298,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             if (!canRefreshHistory(current)) return
             if (mutable.compareAndSet(current, current.copy(refreshing = true))) break
         }
-        action {
+        action(NoticeKey(NoticeKind.Catalog)) {
             try {
                 refreshAll()
                 mutable.update { if (it.historyAvailable) { it.selectedChat?.id?.let(uncertainChats::remove); it.copy(uncertainSend = false) } else it }
@@ -318,7 +319,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             if (mutable.value.catalogRevision != revision) return@withLock
             cachedList = JsonArray(refreshCatalogRows(cachedList, active, archived).filterNot { it.jsonObject.text("id") in deletedChats })
             mutable.update { if (it.catalogRevision != revision) it else it.copy(chats = mergeCatalogChats(emptyList(), cachedList.map { r -> parseChat(r.jsonObject, r.jsonObject.text("cachedArchived") == "true") }),
-                activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }) }
+                activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }).resolveInfoNotice(NoticeKey(NoticeKind.Search)) }
         }
         if (mutable.value.catalogRevision != revision) return
         // Enrich the read-only full catalogue with live status from the shared runtime.
@@ -332,6 +333,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         applySnapshot(rpc.get("/v1/snapshot"))
         mutable.value.selectedChat?.id?.let { loadThread(it) }
         saveCache()
+        mutable.update { if (it.catalogRevision != revision) it else it.resolveInfoNotice(NoticeKey(NoticeKind.Catalog)) }
     }
     private fun applyInventory(raw: JsonObject) {
         val assignments = raw.obj("assignments").mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull.orEmpty() }
@@ -375,7 +377,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val history = cachedThreads[chat.id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
         val window = historyWindow(history, emptyList())
         mutable.update { it.copy(selectedChat = chat, sentMessageEdit = null, writerConflict = false, notice = null, historyRevision = it.historyRevision + 1, diff = null, timeline = window, hiddenOlderCount = history.size - window.size, olderLoading = false, olderError = null, draft = store.draft(chat.id), attachments = store.attachments(chat.id), uploading = false, chatMode = store.chatMode(chat.id), accessMode = store.accessMode(chat.id), selectedModel = "", selectedEffort = "", uncertainSend = chat.id in uncertainChats, historyAvailable = true, activeTurnId = "", snapshotSequence = 0, itemSequences = emptyMap(), threadSequence = 0, olderCursor = null, lastTurnStatus = "", statusSequence = 0, titleSequence = 0) }
-        if (rpc.status.value == "Connected") action { loadThread(chat.id) }
+        if (rpc.status.value == "Connected") action(NoticeKey(NoticeKind.History, chat.id)) { loadThread(chat.id) }
     }
     private suspend fun loadThread(id: String) {
         val revision = mutable.value.historyRevision
@@ -406,6 +408,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         saveCache()
+        if (loaded.authoritative) mutable.update { it.resolveInfoNotice(NoticeKey(NoticeKind.History, id)) }
     }
     fun loadOlder() {
         val initial = mutable.value
@@ -561,8 +564,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 val uncertain = uncertainDelivery(mutationAttempted, acknowledged, e)
                 if (uncertain) uncertainChats.add(chat.id)
                 mutable.update { if (it.selectedChat?.id != chat.id) it.copy(sending = false) else it.copy(sending = false, uncertainSend = uncertain, writerConflict = !acknowledged && writerConflict(e),
-                    notice = if (!acknowledged && writerConflict(e)) null else if (acknowledged) "Message accepted. History refresh is temporarily unavailable."
-                    else (e.message ?: "Send failed") + if (uncertain) ". Refresh and check history before sending again." else "") }
+                    notice = if (!acknowledged && writerConflict(e)) null else if (acknowledged) it.notice
+                    else (e.message ?: "Send failed") + if (uncertain) ". Refresh and check history before sending again." else "")
+                    .let { next -> if (acknowledged) next.withInfoNotice(NoticeKey(NoticeKind.History, chat.id),
+                        "Message accepted. History refresh is temporarily unavailable.") else next } }
                 if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
             }
             }
@@ -581,14 +586,14 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
     private fun loadQueue() {
         val current = mutable.value
-        queueStorageBlocked = false
-        mutable.update { it.copy(queueBlocked = false) }
         messageQueue.restore(current.endpoint, current.username, store.queue(current.endpoint, current.username))
+        queueStorageBlocked = false
+        mutable.update { it.copy(queueBlocked = false).resolveInfoNotice(NoticeKey(NoticeKind.QueueStorage)) }
     }
     private fun queueAction(block: () -> Unit): Boolean {
         return try { block(); true } catch (e: Exception) {
             queueStorageBlocked = true
-            mutable.update { it.copy(queueBlocked = true, notice = e.message ?: "Could not update the queue") }
+            mutable.update { it.copy(queueBlocked = true).withInfoNotice(NoticeKey(NoticeKind.QueueStorage), e.message ?: "Could not update the queue") }
             false
         }
     }
@@ -597,7 +602,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun removeQueued(id: String) { queueAction { messageQueue.remove(id) } }
     fun retryQueued(id: String) { queueAction { messageQueue.retry(id) } }
     fun pauseQueue(chatId: String) = queueAction { messageQueue.pause(chatId) }
-    fun resumeQueue(chatId: String) { queueAction { messageQueue.resume(chatId); queueStorageBlocked = false; mutable.update { it.copy(queueBlocked = false) } } }
+    fun resumeQueue(chatId: String) {
+        if (messageQueue.state.value.messages.any { it.chatId == chatId && it.delivery == "uncertain" }) return
+        queueAction { messageQueue.resume(chatId); queueStorageBlocked = false; mutable.update { it.copy(queueBlocked = false).resolveInfoNotice(NoticeKey(NoticeKind.QueueStorage)) } }
+    }
     private suspend fun dispatchQueuedMessages() = inputMutex.withLock {
         val initial = mutable.value
         if (!foreground || queueStorageBlocked || !initial.signedIn || initial.connection != "Connected" || initial.sending) return@withLock
@@ -626,10 +634,15 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 if (e is CancellationException && e !is TimeoutCancellationException) throw e
                 if (e is QueueWaitingException) continue
                 if (initial.endpoint == mutable.value.endpoint && initial.username == mutable.value.username) {
-                    val uncertain = acknowledged || uncertainDelivery(attempted, acknowledged, e)
-                    val error = if (uncertain) "Check chat history before retrying: delivery could not be confirmed." else e.message ?: "Queued send failed"
-                    ticket?.let { messageQueue.fail(it, error, uncertain) } ?: messageQueue.reject(candidate, error)
-                    mutable.update { it.copy(notice = "Queued message paused: $error") }
+                    if (acknowledged && messageQueue.state.value.messages.none { it.id == candidate.id }) {
+                        mutable.update { it.withInfoNotice(NoticeKey(NoticeKind.History, candidate.chatId),
+                            "Queued message accepted. History refresh is temporarily unavailable.") }
+                    } else {
+                        val uncertain = acknowledged || uncertainDelivery(attempted, acknowledged, e)
+                        val error = if (uncertain) "Check chat history before retrying: delivery could not be confirmed." else e.message ?: "Queued send failed"
+                        ticket?.let { messageQueue.fail(it, error, uncertain) } ?: messageQueue.reject(candidate, error)
+                        mutable.update { it.withInfoNotice(NoticeKey(NoticeKind.QueueDelivery, candidate.chatId), "Queued message paused: $error") }
+                    }
                 }
                 if (e is SessionExpiredException) { disconnect(); clearSession(e.message); break }
             } finally { if (sendClaimed) mutable.update { it.copy(sending = false) } }
@@ -811,8 +824,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         val uncertain = uncertainDelivery(attempted, acknowledged, e)
                         if (uncertain) uncertainChats.add(chat.id)
                         mutable.update { it.copy(uncertainSend = if (it.selectedChat?.id == chat.id) it.uncertainSend || uncertain else it.uncertainSend,
-                            inputErrors = it.inputErrors + (item.id to if (uncertain) "Delivery could not be confirmed. Refresh and check chat history before trying again." else e.message ?: "Answer could not be sent."),
-                            notice = if (acknowledged) "Answer accepted. History refresh is temporarily unavailable." else it.notice) }
+                            inputErrors = if (acknowledged) it.inputErrors - item.id else it.inputErrors + (item.id to
+                                if (uncertain) "Delivery could not be confirmed. Refresh and check chat history before trying again." else e.message ?: "Answer could not be sent."))
+                            .let { next -> if (acknowledged) next.withInfoNotice(NoticeKey(NoticeKind.History, chat.id),
+                                "Answer accepted. History refresh is temporarily unavailable.") else next } }
                     }
                 } finally { mutable.update { it.copy(sending = false, answeringInputs = it.answeringInputs - item.id) } }
             }
@@ -939,11 +954,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         cachedList = JsonArray(cachedList.filterNot { it.jsonObject.text("id") in deletedChats })
         cachedThreads = JsonObject(cachedThreads.filterKeys { it !in deletedChats })
         refreshFavoriteSummaries(); store.saveCache(buildJsonObject { put("threads", cachedThreads); put("chats", cachedList); put("inventory", cachedInventory) }) }
-    private fun action(block: suspend () -> Unit) = viewModelScope.launch(Dispatchers.IO) {
+    private fun action(recoveryKey: NoticeKey? = null, block: suspend () -> Unit) = viewModelScope.launch(Dispatchers.IO) {
         mutable.update { it.copy(loading = true) }
         try { block() } catch (e: Exception) { if (e is CancellationException) throw e
             if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
-            else mutable.update { it.copy(notice = e.message ?: "Action failed") } }
+            else mutable.update { if (recoveryKey == null) it.copy(notice = e.message ?: "Action failed") else it.withInfoNotice(recoveryKey, e.message ?: "Action failed") } }
         finally { mutable.update { it.copy(loading = false) } }
     }
     override fun onCleared() { rpc.close(); super.onCleared() }
