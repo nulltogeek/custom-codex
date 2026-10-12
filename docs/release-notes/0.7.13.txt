@@ -1,0 +1,4 @@
+Pause queue now expands the queue and opens the first waiting message for editing.
+Saving or cancelling keeps the queue paused until you tap Resume queue.
+You can edit other waiting messages with their pencil buttons. Messages already being sent stay protected.
+If saving fails, your edit stays open so you can retry.
