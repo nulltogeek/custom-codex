@@ -1,5 +1,9 @@
 # Response formatting and message input
 
+Your message bubbles sit on the right, and Codex answers sit on the left. These
+positions remain physical right/left in right-to-left app layouts. Text keeps its
+natural reading direction.
+
 Responses use 16 sp text with 26 sp line height, more space between blocks and
 clearer heading sizes. Lists have separate markers and hanging indentation, with
 nested items, continuation lines and task indicators. Consecutive quote lines
