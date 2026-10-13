@@ -50,6 +50,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -257,9 +260,11 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable internal fun ChatsScreen(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit, loadMore: (Boolean) -> Unit = { vm.loadMore(it) },
     archive: (Chat) -> Unit = {}, favorite: (Chat) -> Unit = { vm.favorite(it) }, refresh: () -> Unit = { vm.refresh() }, archivedOnly: Boolean = false, delete: (Chat) -> Unit = {},
-    rename: (Chat) -> Unit = { vm.beginRename(it) }, move: (Chat) -> Unit = { vm.beginMoveChat(it) }) {
+    rename: (Chat) -> Unit = { vm.beginRename(it) }, move: (Chat) -> Unit = { vm.beginMoveChat(it) },
+    deleteSelected: (List<Chat>) -> Unit = { vm.deleteChats(it) }) {
     val query = state.searchTerm; var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val tab = if (archivedOnly) 1 else selectedTab
     val project = state.projects.find { it.id == state.projectFilter }
@@ -273,6 +278,15 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             category && projectMatch && (chat.title.contains(query, true) || chat.preview.contains(query, true))
         }
     }
+    var selectedIds by remember(archivedOnly, state.endpoint, state.username, state.signedIn, state.page, query, state.projectFilter) { mutableStateOf(emptySet<String>()) }
+    var confirmIds by remember(archivedOnly, state.endpoint, state.username, state.signedIn, state.page, query, state.projectFilter) { mutableStateOf<Set<String>?>(null) }
+    val selectedChats = if (archivedOnly) list.filter { it.id in selectedIds } else emptyList()
+    val selecting = selectedChats.isNotEmpty()
+    LaunchedEffect(list, archivedOnly) {
+        selectedIds = selectedIds.intersect(list.filter { archivedOnly && it.archived }.map { it.id }.toSet())
+    }
+    BackHandler(selecting && confirmIds == null) { selectedIds = emptySet() }
+    fun toggle(chat: Chat) { selectedIds = if (chat.id in selectedIds) selectedIds - chat.id else selectedIds + chat.id }
     val listState = key(tab, query, state.projectFilter) { rememberLazyListState() }
     val page = nextCatalogPage(state, tab)
     val error = page?.let { catalogPageError(state, it.archived) }
@@ -284,43 +298,53 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 .collect { nearEnd -> if (nearEnd) latestLoadMore(page.archived) }
     }
     RefreshableLibrary(state, refresh) {
-        LazyColumn(Modifier.fillMaxSize().testTag("catalog-list"), state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            item {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(if (archivedOnly) "Archived chats" else project?.name ?: "Your workspace", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            StatusDot(state.connection == "Connected"); Spacer(Modifier.width(6.dp))
-                            Text(if (archivedOnly) "${state.chats.count { it.archived }} loaded archived chats" + (project?.let { " · ${it.name}" } ?: "") else "${state.projects.size} projects · ${state.chats.size} loaded chats", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(Modifier.fillMaxSize()) {
+            if (selecting) ArchiveSelectionBar(selectedChats.size, canDeleteChats(state, selectedChats),
+                cancel = { selectedIds = emptySet() }, delete = { confirmIds = selectedChats.map { it.id }.toSet() })
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("catalog-list"), state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                item {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(if (archivedOnly) "Archived chats" else project?.name ?: "Your workspace", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                StatusDot(state.connection == "Connected"); Spacer(Modifier.width(6.dp))
+                                Text(if (archivedOnly) "${state.chats.count { it.archived }} loaded archived chats" + (project?.let { " · ${it.name}" } ?: "") else "${state.projects.size} projects · ${state.chats.size} loaded chats", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        if (project != null) IconButton(onClick = { vm.filterProject(null) }) { Icon(Icons.Outlined.Close, "All projects") }
+                        if (!archivedOnly) FilledTonalIconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat") }
+                    }
+                }
+                items(state.pending, key = { "input:${it.id}" }) { request ->
+                    Surface(onClick = { approval(request) }, color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.NotificationsActive, null); Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) { Text("Your input is needed", fontWeight = FontWeight.SemiBold); Text(request.questions().firstOrNull()?.title ?: "Review requested action", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                         }
                     }
-                    if (project != null) IconButton(onClick = { vm.filterProject(null) }) { Icon(Icons.Outlined.Close, "All projects") }
-                    if (!archivedOnly) FilledTonalIconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat") }
                 }
-            }
-            items(state.pending, key = { "input:${it.id}" }) { request ->
-                Surface(onClick = { approval(request) }, color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.NotificationsActive, null); Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) { Text("Your input is needed", fontWeight = FontWeight.SemiBold); Text(request.questions().firstOrNull()?.title ?: "Review requested action", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                item { CompactSearch(query, vm::search, if (archivedOnly) "Search archived chats" else "Search all chats") }
+                if (!archivedOnly) item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(0 to "Recent", 3 to "Favorites", 2 to "Agent chats").forEach { (i, label) -> FilterChip(selected = tab == i, onClick = { selectedTab = i }, label = { Text(label) }) } } }
+                if (list.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (archivedOnly) "No archived chats" else if (tab == 3) "No favorite chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (archivedOnly) "Chats you archive appear here. Open one to read or restore it." else if (tab == 3) "Tap a chat's star to keep it here." else "Choose a project or start a conversation.") }
+                items(list, key = { it.id }, contentType = { "chat" }) { chat ->
+                    val p = state.projects.find { chatBelongsToProject(chat, it, state.assignments) }
+                    SwipeDeleteRow(chat, !selecting && canDeleteChat(state, chat), delete = { delete(chat) }) {
+                        ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { if (selecting) toggle(chat) else vm.open(chat) },
+                            renameEnabled = canRename(state), onRename = { rename(chat) }, moveEnabled = canMoveChat(state), onMove = { move(chat) },
+                            archiveEnabled = canArchive(state, chat), onArchive = { archive(chat) },
+                            selecting = selecting, selected = chat.id in selectedIds, onLongClick = if (archivedOnly) ({ toggle(chat) }) else null)
                     }
                 }
-            }
-            item { CompactSearch(query, vm::search, if (archivedOnly) "Search archived chats" else "Search all chats") }
-            if (!archivedOnly) item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(0 to "Recent", 3 to "Favorites", 2 to "Agent chats").forEach { (i, label) -> FilterChip(selected = tab == i, onClick = { selectedTab = i }, label = { Text(label) }) } } }
-            if (list.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (archivedOnly) "No archived chats" else if (tab == 3) "No favorite chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (archivedOnly) "Chats you archive appear here. Open one to read or restore it." else if (tab == 3) "Tap a chat's star to keep it here." else "Choose a project or start a conversation.") }
-            items(list, key = { it.id }, contentType = { "chat" }) { chat ->
-                val p = state.projects.find { chatBelongsToProject(chat, it, state.assignments) }
-                SwipeDeleteRow(chat, canDeleteChat(state, chat), delete = { delete(chat) }) {
-                    ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) },
-                        renameEnabled = canRename(state), onRename = { rename(chat) }, moveEnabled = canMoveChat(state), onMove = { move(chat) },
-                        archiveEnabled = canArchive(state, chat), onArchive = { archive(chat) })
+                if (page != null) item(key = "catalog-footer") {
+                    PageLoader(state.catalogLoading, error, "More chats load as you scroll", state.connection == "Connected") { loadMore(page.archived) }
                 }
             }
-            if (page != null) item(key = "catalog-footer") {
-                PageLoader(state.catalogLoading, error, "More chats load as you scroll", state.connection == "Connected") { loadMore(page.archived) }
-            }
         }
+    }
+    confirmIds?.let { ids ->
+        val targets = list.filter { it.id in ids }
+        ArchiveDeleteDialog(ids.size, targets.size == ids.size && canDeleteChats(state, targets),
+            dismiss = { confirmIds = null }, delete = { deleteSelected(targets); confirmIds = null })
     }
 }
 
@@ -340,11 +364,17 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable private fun ChatRow(chat: Chat, project: String, favorite: Boolean, onFavorite: () -> Unit, onClick: () -> Unit,
-    renameEnabled: Boolean, onRename: () -> Unit, moveEnabled: Boolean, onMove: () -> Unit, archiveEnabled: Boolean, onArchive: () -> Unit) {
-    Surface(onClick = onClick, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
+    renameEnabled: Boolean, onRename: () -> Unit, moveEnabled: Boolean, onMove: () -> Unit, archiveEnabled: Boolean, onArchive: () -> Unit,
+    selecting: Boolean = false, selected: Boolean = false, onLongClick: (() -> Unit)? = null) {
+    Surface(modifier = Modifier.testTag("chat-row:${chat.id}").combinedClickable(onClick = onClick, onLongClick = onLongClick,
+        onLongClickLabel = if (onLongClick != null) "Select chat" else null, role = if (selecting) Role.Checkbox else Role.Button)
+        .semantics { if (selecting) { this.selected = selected; toggleableState = if (selected) ToggleableState.On else ToggleableState.Off } },
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(10.dp)) {
+            if (selecting) Checkbox(selected, onCheckedChange = null, modifier = Modifier.size(32.dp))
+            else Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(10.dp)) {
                 Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
                     Icon(if (chat.parentId != null || chat.source == "subAgent") Icons.Outlined.AccountTree else Icons.AutoMirrored.Outlined.Chat, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
                 }
@@ -362,8 +392,10 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     if (chat.status == "active") { StatusDot(true); Spacer(Modifier.width(4.dp)); Text("Running", style = MaterialTheme.typography.labelSmall) }
                 }
             }
-            FavoriteButton(favorite, "chat ${chat.title}", onFavorite)
-            ChatOptionsMenu(chat, renameEnabled, moveEnabled, onRename, onMove, archiveEnabled, onArchive)
+            if (!selecting) {
+                FavoriteButton(favorite, "chat ${chat.title}", onFavorite)
+                ChatOptionsMenu(chat, renameEnabled, moveEnabled, onRename, onMove, archiveEnabled, onArchive)
+            }
         }
     }
 }

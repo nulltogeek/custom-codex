@@ -1,0 +1,1 @@
+Long-press a chat in Archived to select it, then tap additional chats to select or deselect them. Delete one or several selected chats together after confirmation. Use Back or Cancel selection to exit. Running tasks, pending requests and queued messages prevent deletion. If deletion fails, remaining chats are kept and the batch stops.

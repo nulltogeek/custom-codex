@@ -1082,30 +1082,47 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         mutable.update { it.copy(favoriteChats = it.favoriteChats.map { c -> if (c.id == chat.id) c.copy(archived = !live.archived) else c }) }
         saveFavorites(); refreshAll()
     }
-    fun deleteChat(chat: Chat) {
-        if (!canDeleteChat(mutable.value, chat)) return
-        action {
-            val current = mutable.value
-            val live = current.chats.find { it.id == chat.id } ?: current.selectedChat?.takeIf { it.id == chat.id } ?: chat
-            check(live.archived && current.connection == "Connected" && !current.sending &&
-                current.queuedMessages.none { it.chatId == chat.id } && current.pending.none { it.params.text("threadId") == chat.id }) {
-                "Finish work and remove queued messages before deleting this archived chat."
-            }
-            val metadata = rpc.call("thread/read", buildJsonObject { put("threadId", chat.id); put("includeTurns", false) }).obj("thread")
-            check(metadata.obj("status").text("type") != "active") { "Finish the running task before deleting this chat." }
-            try { rpc.call("thread/delete", jsonObject("threadId" to chat.id)) }
-            catch (e: Exception) {
+    fun deleteChat(chat: Chat) = deleteChats(listOf(chat))
+    fun deleteChats(chats: List<Chat>) {
+        val source = mutable.value
+        fun live(state: ScreenState, chat: Chat) = state.chats.find { it.id == chat.id }
+            ?: state.selectedChat?.takeIf { it.id == chat.id } ?: chat
+        val targets = chats.distinctBy { it.id }.map { live(source, it) }
+        if (!canDeleteChats(source, targets)) return
+        val identity = store.sessionIdentity
+        val epoch = lastEpoch
+        if (!mutable.compareAndSet(source, source.copy(loading = true))) return
+        viewModelScope.launch(Dispatchers.IO) {
+            fun sameContext() = identity == store.sessionIdentity && epoch == lastEpoch
+            try {
+                inputMutex.withLock {
+                    val result = deleteArchivedChats(targets, eligible = { chat ->
+                        val current = mutable.value
+                        sameContext() && chat.id !in deletedChats && canDeleteChat(current.copy(loading = false), live(current, chat))
+                    }, call = rpc::call, removed = { chat ->
+                        check(sameContext()) { "The account or host changed. Refresh archived history." }
+                        forgetDeletedChat(chat.id)
+                    })
+                    if (!sameContext()) return@withLock
+                    var refreshFailed = false
+                    if (result.deleted > 0 || result.error != null) try { refreshAll() }
+                    catch (e: Exception) {
+                        if (e is CancellationException || e is SessionExpiredException) throw e
+                        refreshFailed = true
+                    }
+                    if (sameContext()) mutable.update { state -> state.copy(notice = when {
+                        result.error != null -> "${result.deleted} of ${targets.size} chats deleted. ${result.error}"
+                        refreshFailed -> "Chats deleted. Refresh history to continue loading chats."
+                        else -> "${result.deleted} chat${if (result.deleted == 1) "" else "s"} deleted."
+                    }) }
+                }
+            } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                if (e is RpcException) throw IllegalStateException("Chat was not deleted: ${e.message}. Your host must support chat deletion.")
-                throw IllegalStateException("Deletion could not be confirmed. Refresh archived history before trying again.")
-            }
-            forgetDeletedChat(chat.id)
-            try { refreshAll() }
-            catch (e: Exception) {
-                if (e is CancellationException) throw e
-                if (e is SessionExpiredException) throw e
-                mutable.update { it.copy(notice = "Chat deleted. Refresh history to continue loading chats.") }
-            }
+                if (sameContext()) {
+                    if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                    else mutable.update { it.copy(notice = e.message ?: "Could not delete chats.") }
+                }
+            } finally { if (identity == store.sessionIdentity) mutable.update { it.copy(loading = false) } }
         }
     }
     private fun forgetDeletedChat(id: String) {
