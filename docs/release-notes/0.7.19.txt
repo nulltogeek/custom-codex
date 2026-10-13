@@ -1,0 +1,1 @@
+Fix command cards disappearing after leaving a running chat and returning. Commands and their output continue updating while you browse other chats or projects. Previously observed commands are retained when saved history is incomplete, including earlier command history. The command-output download setting is respected.

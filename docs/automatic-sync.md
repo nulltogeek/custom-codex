@@ -10,7 +10,11 @@ without waiting for the host, project catalogue or model list to finish loading.
 An empty chat shows “Updating chat…” while its history is being fetched. Cached
 messages stay visible during updates. Navigating away cancels the visible-chat
 read; returning starts a new read. Live messages keep their sequence guards so
-an older history response cannot overwrite a newer streamed response.
+an older history response cannot overwrite a newer streamed response. Starting
+with 0.7.19, observed command cards also remain in a bounded per-chat session
+cache while browsing another screen. Reopening and earlier-history loading
+merge this cache with saved history; missing commands from running turns are
+retained. See [live command history](live-command-history.md).
 
 Library metadata and task completion events trigger a short coalesced update
 while a library is visible. These requests run one at a time, with at most one

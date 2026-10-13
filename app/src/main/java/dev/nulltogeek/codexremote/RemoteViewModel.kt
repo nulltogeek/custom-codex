@@ -26,6 +26,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var libraryRetryJob: Job? = null
     private val chatSyncGeneration = java.util.concurrent.atomic.AtomicLong()
     private val threadReads = SyncReads()
+    private val liveHistory = LiveChatHistory()
     private val libraryEvents = java.util.concurrent.atomic.AtomicLong()
     private val catalogMutex = kotlinx.coroutines.sync.Mutex()
     private val inputMutex = kotlinx.coroutines.sync.Mutex()
@@ -119,7 +120,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     rpc.configure(store.endpoint, session)
                     val snapshot = commandOutputMutex.withLock { rpc.connect(mutable.value.loadCommandOutput) }
                     if (lastEpoch != snapshot.text("epoch")) mutable.update { it.copy(snapshotSequence = 0, itemSequences = emptyMap(), threadSequence = 0, statusSequence = 0, titleSequence = 0, pendingSequence = 0) }
-                    lastEpoch = snapshot.text("epoch"); applySnapshot(snapshot)
+                    lastEpoch = snapshot.text("epoch")
+                    liveHistory.activate(store.sessionIdentity, lastEpoch)
+                    applySnapshot(snapshot)
                     checkAppUpdate(automatic = true)
                     requestChatSync()
                     refreshAll(syncChat = false)
@@ -156,6 +159,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         updateJob?.cancel(); olderJob?.cancel()
         synchronized(uploadJobs) { uploadJobs.values.forEach { it.cancel() }; uploadJobs.clear() }
         TaskNotificationService.stop(getApplication())
+        liveHistory.clear()
         messageQueue.detach(); rpc.close(); store.signOut()
         mutable.update { ScreenState(endpoint = store.endpoint, username = store.username, theme = it.theme, accent = it.accent, motion = it.motion, loadCommandOutput = it.loadCommandOutput, notice = notice) }
     }
@@ -610,8 +614,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         cancelChatSync()
         synchronized(uploadJobs) { uploadJobs.values.forEach { it.cancel() }; uploadJobs.clear() }
         val history = cachedThreads[chat.id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
-        val window = historyWindow(history, emptyList())
-        mutable.update { it.copy(selectedChat = chat, sentMessageEdit = null, writerConflict = false, notice = null, historyRevision = it.historyRevision + 1, diff = null, timeline = window, hiddenOlderCount = history.size - window.size, olderLoading = false, olderError = null, draft = store.draft(chat.id), attachments = store.attachments(chat.id), uploading = false, chatMode = store.chatMode(chat.id), accessMode = store.accessMode(chat.id), selectedModel = "", selectedEffort = "", uncertainSend = chat.id in uncertainChats, historyAvailable = true, activeTurnId = "", snapshotSequence = 0, itemSequences = emptyMap(), threadSequence = 0, olderCursor = null, lastTurnStatus = "", statusSequence = 0, titleSequence = 0) }
+        mutable.update { state ->
+            val live = liveHistory.snapshot(chat.id, store.sessionIdentity, lastEpoch)
+            val full = live.merge(history, 0)
+            val window = historyWindow(full, emptyList())
+            state.copy(selectedChat = chat, sentMessageEdit = null, writerConflict = false, notice = null, historyRevision = state.historyRevision + 1, diff = null, timeline = window, hiddenOlderCount = full.size - window.size, olderLoading = false, olderError = null, draft = store.draft(chat.id), attachments = store.attachments(chat.id), uploading = false, chatMode = store.chatMode(chat.id), accessMode = store.accessMode(chat.id), selectedModel = "", selectedEffort = "", uncertainSend = chat.id in uncertainChats, historyAvailable = true, activeTurnId = live.activeTurnId, snapshotSequence = live.sequence, itemSequences = live.itemSequences, threadSequence = live.turnSequence, olderCursor = null, lastTurnStatus = live.turnStatuses.values.lastOrNull().orEmpty(), statusSequence = 0, titleSequence = 0) }
         requestChatSync()
     }
     private suspend fun loadThread(id: String, revision: Long = mutable.value.historyRevision) {
@@ -631,18 +638,25 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             cachedThreads.entries.toList().takeLast(7).forEach { (k, v) -> put(k, v) }; put(id, raw)
         }
         val cutoff = loaded.sequence
+        if (loaded.authoritative) liveHistory.remember(id, parseTimeline(raw), cutoff, request.session, request.epoch)
         mutable.update { current ->
             if (!current() || current.selectedChat?.id != id || current.historyRevision != revision) current else {
                 val newer = current.timeline.filter { (current.itemSequences[it.id] ?: 0) > cutoff }.associateBy { it.id }
-                val fullHistory = if (loaded.authoritative) parseTimeline(raw) else cachedThreads[id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
+                val live = liveHistory.snapshot(id, store.sessionIdentity, lastEpoch)
+                val metadata = reconcileChatMetadata(current, parseChat(raw, current.selectedChat.archived), loaded.metadataSequence)
+                val saved = if (loaded.authoritative) parseTimeline(raw) else cachedThreads[id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
+                val running = metadata.selectedChat?.status?.let { if (it == "notLoaded") null else it == "active" }
+                val fullHistory = live.merge(saved, cutoff, running)
                 val history = historyWindow(fullHistory, current.timeline)
                 val merged = if (!loaded.authoritative) current.timeline else history.map { newer[it.id] ?: it } + newer.values.filter { n -> history.none { it.id == n.id } }
-                val summary = parseChat(raw, current.selectedChat.archived)
-                reconcileChatMetadata(current, summary, loaded.metadataSequence).copy(timeline = merged, hiddenOlderCount = fullHistory.size - history.size, olderCursor = loaded.olderCursor, historyAvailable = loaded.authoritative,
+                val savedActive = raw.array("turns").mapNotNull { it as? JsonObject }.lastOrNull { it.text("status") == "inProgress" }?.text("id").orEmpty()
+                val active = if (running == false && live.turnSequence <= cutoff) "" else live.activeTurnId.ifEmpty { savedActive }
+                    .takeUnless { turn -> fullHistory.any { it.turnId == turn && it.turnStatus in setOf("completed", "failed", "interrupted") } }.orEmpty()
+                metadata.copy(timeline = merged, hiddenOlderCount = fullHistory.size - history.size, olderCursor = loaded.olderCursor, historyAvailable = loaded.authoritative,
                     selectedModel = current.selectedModel.ifEmpty { raw.text("model") }, selectedEffort = current.selectedEffort.ifEmpty { raw.text("reasoningEffort") },
-                    lastTurnStatus = if (!loaded.authoritative || current.threadSequence > cutoff) current.lastTurnStatus else (raw.array("turns").lastOrNull() as? JsonObject)?.text("status").orEmpty(),
-                    activeTurnId = if (!loaded.authoritative || current.threadSequence > cutoff) current.activeTurnId else raw.array("turns").mapNotNull { it as? JsonObject }.lastOrNull { it.text("status") == "inProgress" }?.text("id").orEmpty(),
-                    snapshotSequence = if (loaded.authoritative) cutoff else current.snapshotSequence, itemSequences = if (loaded.authoritative) current.itemSequences.filterValues { it > cutoff } else current.itemSequences)
+                    lastTurnStatus = if (!loaded.authoritative || current.threadSequence > cutoff) current.lastTurnStatus else if (active.isNotEmpty()) "inProgress" else live.turnStatuses.values.lastOrNull()?.takeIf { it != "inProgress" } ?: (raw.array("turns").lastOrNull() as? JsonObject)?.text("status").orEmpty(),
+                    activeTurnId = if (!loaded.authoritative || current.threadSequence > cutoff) current.activeTurnId else active,
+                    snapshotSequence = if (loaded.authoritative) maxOf(cutoff, live.sequence) else current.snapshotSequence, itemSequences = if (loaded.authoritative) (live.itemSequences + current.itemSequences).filterValues { it > cutoff } else current.itemSequences)
             }
         }
         saveCache()
@@ -657,10 +671,15 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         olderJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 if (initial.hiddenOlderCount > 0) {
-                    val all = cachedThreads[id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
-                    val older = all.take(initial.hiddenOlderCount).takeLast(60)
-                    mutable.update { if (it.selectedChat?.id != id || it.historyRevision != initial.historyRevision) it else it.copy(
-                        timeline = (older + it.timeline).distinctBy { item -> item.id }, hiddenOlderCount = (initial.hiddenOlderCount - older.size).coerceAtLeast(0)) }
+                    mutable.update { state ->
+                        if (state.selectedChat?.id != id || state.historyRevision != initial.historyRevision) state else {
+                            val saved = cachedThreads[id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
+                            val all = liveHistory.snapshot(id, store.sessionIdentity, lastEpoch).merge(saved, 0)
+                            val anchor = all.indexOfFirst { it.id == state.timeline.firstOrNull()?.id }.coerceAtLeast(0)
+                            val older = all.take(anchor).takeLast(60)
+                            state.copy(timeline = (older + state.timeline).distinctBy { it.id }, hiddenOlderCount = anchor - older.size)
+                        }
+                    }
                 } else {
                     val page = rpc.call("thread/turns/list", buildJsonObject { put("threadId", id); put("cursor", initial.olderCursor!!); put("limit", 20); put("itemsView", "full"); put("sortDirection", "desc") })
                     val turns = JsonArray(page.array("data").reversed())
@@ -1092,6 +1111,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private fun forgetDeletedChat(id: String) {
         if (id.isBlank() || !deletedChats.add(id)) return
         mutable.update { withoutDeletedChat(it, id) }
+        liveHistory.forget(id)
         uncertainChats.remove(id); store.forgetChat(id)
         cachedThreads = JsonObject(cachedThreads.filterKeys { it != id })
         cachedList = JsonArray(cachedList.filterNot { it.jsonObject.text("id") == id })
@@ -1100,6 +1120,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private fun applyEvents(events: List<JsonObject>) {
         events.filter { it.text("method") == "thread/deleted" && (it.text("_bridgeEpoch").isEmpty() || it.text("_bridgeEpoch") == lastEpoch) }.forEach { forgetDeletedChat(it.obj("params").text("threadId")) }
         val currentEvents = events.filter { it.text("_bridgeEpoch").isEmpty() || it.text("_bridgeEpoch") == lastEpoch }
+        // Subscription replay can reach the actor before connect() returns its snapshot.
+        if (mutable.value.signedIn && rpc.epoch.isNotEmpty()) {
+            liveHistory.activate(store.sessionIdentity, rpc.epoch)
+            events.filter { it.obj("params").text("threadId") !in deletedChats }.forEach { liveHistory.accept(it, store.sessionIdentity, rpc.epoch) }
+        }
         if (currentEvents.any { libraryChanged(it.text("method")) }) libraryEvents.incrementAndGet()
         mutable.update { before ->
             var state = before
