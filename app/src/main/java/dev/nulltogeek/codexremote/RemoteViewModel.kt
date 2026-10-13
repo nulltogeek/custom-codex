@@ -112,13 +112,14 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private fun connectIfForeground() = viewModelScope.launch(Dispatchers.Main.immediate) {
         if (!foreground || !mutable.value.signedIn || reconnect?.isActive == true) return@launch
         reconnect = viewModelScope.launch(Dispatchers.IO) {
-            var delayMs = 1000L
+            val backoff = ReconnectBackoff()
             while (foreground && isActive && mutable.value.signedIn) {
                 try {
                     val session = store.session()
                     if (session.isEmpty()) throw SessionExpiredException()
                     rpc.configure(store.endpoint, session)
                     val snapshot = commandOutputMutex.withLock { rpc.connect(mutable.value.loadCommandOutput) }
+                    backoff.connected()
                     if (lastEpoch != snapshot.text("epoch")) mutable.update { it.copy(snapshotSequence = 0, itemSequences = emptyMap(), threadSequence = 0, statusSequence = 0, titleSequence = 0, pendingSequence = 0) }
                     lastEpoch = snapshot.text("epoch")
                     liveHistory.activate(store.sessionIdentity, lastEpoch)
@@ -131,9 +132,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     if (e is SessionExpiredException) { clearSession(e.message); break }
+                    rpc.close()
                     mutable.update { it.copy(connection = "Offline").withInfoNotice(NoticeKey(NoticeKind.Connection), e.message ?: "Cannot connect to host") }
                 }
-                if (foreground) { delay(delayMs); delayMs = (delayMs * 2).coerceAtMost(30000) }
+                if (foreground) delay(backoff.nextDelayMillis())
             }
         }
     }

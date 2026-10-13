@@ -18,10 +18,11 @@ import java.io.File
 class SessionExpiredException : IOException("Your session expired. Please sign in again.")
 class RpcException(val code: Int, message: String) : IOException(message)
 class HostHttpException(val statusCode: Int) : IOException("Host returned HTTP $statusCode")
+class RpcTimeoutException : IOException("Host response timed out; reconnecting. If you sent a message, check chat history before resending")
 class CommandOutputUnsupportedException : IOException("Update the computer's server to disable command output downloads.")
 data class LoginSession(val token: String, val username: String, val expiresAt: Long)
 
-class RpcClient {
+class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requestTimeoutMillis: Long = 30000) {
     private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS).build()
     private val ids = AtomicLong()
@@ -30,7 +31,7 @@ class RpcClient {
     val status = MutableStateFlow("Offline")
     @Volatile var epoch = ""; private set
     @Volatile var sequence = 0L; private set
-    private var socket: WebSocket? = null
+    @Volatile private var socket: WebSocket? = null
     private var opened: CompletableDeferred<Unit>? = null
     private var endpoint = ""; private var token = ""
 
@@ -173,7 +174,7 @@ class RpcClient {
         close(); status.value = "Connecting"; val ready = CompletableDeferred<Unit>(); opened = ready
         val request = Request.Builder().url(endpoint.replaceFirst("https://", "wss://").replaceFirst("http://", "ws://") + "/v1/rpc")
             .header("Authorization", "Bearer $token").build()
-        socket = http.newWebSocket(request, object : WebSocketListener() {
+        val attempt = synchronized(this) { http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) { ready.complete(Unit) }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (webSocket !== socket) return
@@ -199,27 +200,38 @@ class RpcClient {
                     }
                 } catch (_: Exception) { webSocket.close(1002, "Invalid host message") }
             }
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { if (webSocket === socket) fail("Connection lost", response?.code == 401) }
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { if (webSocket === socket) fail("Offline", code == 1008) }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) { abortSocket(webSocket, "Connection lost", response?.code == 401) }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { abortSocket(webSocket, "Offline", code == 1008) }
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason) }
-        })
-        withTimeout(20000) { ready.await() }
-        call("initialize", buildJsonObject {})
-        socket?.send("{\"method\":\"initialized\",\"params\":{}}")
-        // Negotiate before subscribing so an older server cannot replay large outputs
-        // when the phone explicitly requested reduced downloads.
-        if (!loadCommandOutput) {
-            try { setCommandOutput(false) }
-            catch (e: CommandOutputUnsupportedException) {
-                if (!allowLegacyCommandOutput) { close(); throw e }
+        }).also { socket = it } }
+        try {
+            if (withTimeoutOrNull(connectTimeoutMillis) { ready.await() } == null) throw RpcTimeoutException()
+            call("initialize", buildJsonObject {})
+            socket?.send("{\"method\":\"initialized\",\"params\":{}}")
+            // Negotiate before subscribing so an older server cannot replay large outputs
+            // when the phone explicitly requested reduced downloads.
+            if (!loadCommandOutput) {
+                try { setCommandOutput(false) }
+                catch (e: CommandOutputUnsupportedException) {
+                    if (!allowLegacyCommandOutput) { close(); throw e }
+                }
             }
+            val snapshot = call("bridge/subscribe", buildJsonObject {
+                put("epoch", epoch); put("sequence", sequence); put("loadCommandOutput", loadCommandOutput)
+            })
+            val cursor = subscriptionCursor(epoch, sequence, snapshot)
+            epoch = cursor.first; sequence = cursor.second
+            synchronized(this) {
+                if (socket !== attempt) throw IOException("Connection lost")
+                status.value = "Connected"
+            }
+            return snapshot
+        } catch (e: Exception) {
+            // Only this attempt owns cleanup. A delayed old callback must not
+            // change the state of a replacement connection.
+            abortSocket(attempt, if (e is CancellationException) "Offline" else "Connection lost", e is SessionExpiredException)
+            throw e
         }
-        val snapshot = call("bridge/subscribe", buildJsonObject {
-            put("epoch", epoch); put("sequence", sequence); put("loadCommandOutput", loadCommandOutput)
-        })
-        val cursor = subscriptionCursor(epoch, sequence, snapshot)
-        epoch = cursor.first; sequence = cursor.second
-        status.value = "Connected"; return snapshot
     }
     suspend fun setCommandOutput(enabled: Boolean) {
         val response = try { call("bridge/commandOutput", buildJsonObject { put("loadCommandOutput", enabled) }) }
@@ -228,10 +240,16 @@ class RpcClient {
     }
     suspend fun call(method: String, params: JsonObject = buildJsonObject {}): JsonObject {
         val id = ids.incrementAndGet(); val result = CompletableDeferred<JsonObject>(); pending[id] = result
+        val activeSocket = socket
         try {
             val message = buildJsonObject { put("id", id); put("method", method); put("params", params) }
-            if (socket?.send(message.toString()) != true) throw IOException("Not connected")
-            return withTimeout(30000) { result.await() }
+            if (activeSocket?.send(message.toString()) != true) throw IOException("Not connected")
+            // An internal deadline is a recoverable IO failure, not cancellation
+            // of the caller's reconnect, notification or queue coroutine.
+            return withTimeoutOrNull(requestTimeoutMillis) { result.await() } ?: run {
+                abortSocket(activeSocket, "Connection lost")
+                throw RpcTimeoutException()
+            }
         } finally { pending.remove(id) }
     }
     private fun fail(message: String, expired: Boolean = false) {
@@ -239,5 +257,15 @@ class RpcClient {
         opened?.completeExceptionally(if (expired) SessionExpiredException() else IOException(message))
         pending.values.forEach { it.completeExceptionally(IOException("Connection lost; check chat history before resending")) }; pending.clear()
     }
-    fun close() { socket?.close(1000, "Client paused"); socket = null; fail("Offline") }
+    @Synchronized private fun abortSocket(expected: WebSocket?, message: String, expired: Boolean = false) {
+        if (socket !== expected) return
+        socket = null
+        expected?.cancel()
+        fail(message, expired)
+    }
+    @Synchronized fun close() {
+        val previous = socket; socket = null
+        previous?.close(1000, "Client paused")
+        fail("Offline")
+    }
 }

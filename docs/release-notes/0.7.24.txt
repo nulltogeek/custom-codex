@@ -1,0 +1,1 @@
+Fix automatic reconnection stopping after a slow or stalled host response. Timed-out sockets are discarded, pending requests are released, and the app and task notifications retry automatically. Cancelling a connection attempt cleans up its socket. Successful connections reset the retry delay. Uncertain sent messages are never resent automatically.

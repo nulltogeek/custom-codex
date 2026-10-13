@@ -58,7 +58,7 @@ class TaskNotificationService : Service() {
                 catch (_: Exception) { stopSelf(); break }
             }
         }
-        var retry = 1000L
+        val backoff = ReconnectBackoff()
         try {
             while (isActive && enabled(endpoint, username, identity)) {
                 try {
@@ -66,7 +66,7 @@ class TaskNotificationService : Service() {
                     // This subscription only needs task metadata, never terminal output.
                     val legacyOutputAllowed = store.loadCommandOutput
                     rpc.connect(loadCommandOutput = false, allowLegacyCommandOutput = legacyOutputAllowed)
-                    retry = 1000L
+                    backoff.connected()
                     while (isActive && enabled(endpoint, username, identity) && rpc.status.value == "Connected" &&
                         store.loadCommandOutput == legacyOutputAllowed) delay(1000)
                     if (rpc.status.value == "Session expired") break
@@ -76,7 +76,7 @@ class TaskNotificationService : Service() {
                 }
                 rpc.close()
                 if (!enabled(endpoint, username, identity)) break
-                delay(retry); retry = (retry * 2).coerceAtMost(30000)
+                delay(backoff.nextDelayMillis())
             }
         } finally { consumer.cancel(); rpc.close(); stopSelf() }
     }
