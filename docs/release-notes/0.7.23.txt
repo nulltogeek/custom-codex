@@ -1,0 +1,1 @@
+Open Your questions inside a chat to find and jump directly to any loaded message you sent. Search message previews, load earlier messages without leaving the picker, and tap a question to scroll to its highlighted bubble. Repeated questions and image-only messages have separate navigation entries.

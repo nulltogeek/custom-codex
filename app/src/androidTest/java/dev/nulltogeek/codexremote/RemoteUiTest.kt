@@ -30,6 +30,62 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 class RemoteUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @Test fun questionNavigatorShowsBeginningOfTallQuestion() {
+        val state = ScreenState(selectedChat = Chat("tall-question", "Questions", "", "", "idle"), motion = false,
+            timeline = listOf(TimelineItem("tall", "userMessage", "Start of my question.\n" + "Question details.\n".repeat(150)),
+                TimelineItem("answer", "agentMessage", "Answer")))
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { ChatTimeline(state, Modifier.fillMaxHeight(), {}, {}, {}) }
+        } }
+        compose.onNodeWithTag("your-questions").performClick()
+        compose.onNodeWithTag("question-link:tall").performClick()
+        compose.onNodeWithTag("copy-message:tall").assertIsDisplayed()
+    }
+
+    @Test fun questionNavigatorJumpsToExactRepeatedMessageAndKeepsItVisibleDuringUpdates() {
+        val state = mutableStateOf(ScreenState(selectedChat = Chat("navigation", "Questions", "", "", "idle"), motion = false,
+            timeline = (1..40).flatMap { listOf(TimelineItem("u$it", "userMessage", "Repeated question", turnId = "t$it"),
+                TimelineItem("a$it", "agentMessage", "Answer $it", turnId = "t$it")) }))
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { ChatTimeline(state.value, Modifier.fillMaxHeight(), {}, {}, {}) }
+        } }
+        compose.onNodeWithTag("your-questions").performClick()
+        compose.onNodeWithTag("question-search").performTextInput("REPEATED")
+        compose.onNodeWithTag("question-list").performScrollToNode(hasTestTag("question-link:u7"))
+        compose.onNodeWithTag("question-link:u7").performClick()
+        compose.onNodeWithTag("message:u7").assertIsDisplayed()
+        compose.onNodeWithTag("question-list").assertDoesNotExist()
+        compose.runOnIdle { state.value = state.value.copy(timeline = state.value.timeline + TimelineItem("new", "agentMessage", "New response")) }
+        compose.onNodeWithTag("message:u7").assertIsDisplayed()
+        compose.onNodeWithTag("jump-to-latest").performClick()
+        compose.onNodeWithText("New response").assertIsDisplayed()
+    }
+
+    @Test fun questionNavigatorLoadsOlderQuestionsAndAllowsRetry() {
+        val state = mutableStateOf(ScreenState(selectedChat = Chat("older-questions", "Questions", "", "", "idle"),
+            connection = "Connected", hiddenOlderCount = 60, motion = false,
+            timeline = (1..30).map { TimelineItem("a$it", "agentMessage", "Answer $it") }))
+        var calls = 0
+        compose.activityRule.scenario.onActivity { activity -> activity.setContent {
+            RemoteTheme("dark", motion = false) { ChatTimeline(state.value, Modifier.fillMaxHeight(), {
+                calls++; state.value = state.value.copy(olderLoading = true)
+            }, {}, {}) }
+        } }
+        compose.onNodeWithTag("your-questions").performClick()
+        compose.onNodeWithTag("question-load-earlier").performClick()
+        compose.runOnIdle { assertEquals(1, calls) }
+        compose.onNodeWithTag("question-load-earlier").assertIsNotEnabled()
+        compose.runOnIdle { state.value = state.value.copy(olderLoading = false, olderError = "Could not load earlier messages. Tap to retry.") }
+        compose.onNodeWithText("Retry earlier messages").performClick()
+        compose.runOnIdle {
+            assertEquals(2, calls)
+            state.value = state.value.copy(olderLoading = false, olderError = null, hiddenOlderCount = 0,
+                timeline = listOf(TimelineItem("old-question", "userMessage", "An earlier question")) + state.value.timeline)
+        }
+        compose.onNodeWithTag("question-link:old-question").performClick()
+        compose.onNodeWithTag("message:old-question").assertIsDisplayed()
+    }
+
     @Test fun questionChoicesAndCustomAnswersSubmitTogetherWithoutDefaults() {
         val questions = listOf(InputQuestion("format", "Choose a format", options = listOf(InputOption("PNG", "Supports transparency"), InputOption("JPEG"))),
             InputQuestion("size", "What size?"))

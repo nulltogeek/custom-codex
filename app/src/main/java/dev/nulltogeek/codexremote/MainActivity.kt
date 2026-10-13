@@ -492,18 +492,32 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     val scope = rememberCoroutineScope()
     val hasOlder = state.olderCursor != null || state.hiddenOlderCount > 0
     val messages = remember(state.timeline, state.activeTurnId, state.selectedChat?.status) { conversationTimeline(state) }
+    val currentMessages by rememberUpdatedState(messages)
+    var showQuestions by remember(state.selectedChat?.id) { mutableStateOf(false) }
+    var selectedQuestion by remember(state.selectedChat?.id) { mutableStateOf<String?>(null) }
+    var jumpingToQuestion by remember(state.selectedChat?.id) { mutableStateOf(false) }
     val last = messages.lastOrNull()
-    LaunchedEffect(last?.id, last?.text?.length) { if (followTail && messages.isNotEmpty()) listState.scrollToItem(0) }
+    LaunchedEffect(last?.id, last?.text?.length) { if (followTail && !jumpingToQuestion && messages.isNotEmpty()) listState.scrollToItem(0) }
     LaunchedEffect(listState, state.olderCursor, state.hiddenOlderCount, state.olderError, state.olderLoading, state.connection) {
         if (hasOlder && state.olderError == null && !state.olderLoading && (state.hiddenOlderCount > 0 || state.connection == "Connected"))
             snapshotFlow { listState.layoutInfo.totalItemsCount > 0 && (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) >= listState.layoutInfo.totalItemsCount - 3 }
                 .collect { nearStart -> if (nearStart) loadOlder() }
     }
-    Box(modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = { showQuestions = true }, modifier = Modifier.testTag("your-questions"),
+                enabled = messages.any { it.type == "userMessage" } || hasOlder) {
+                Icon(Icons.Outlined.FormatListBulleted, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Your questions")
+            }
+        }
+    Box(Modifier.weight(1f).fillMaxWidth()) {
         LazyColumn(Modifier.fillMaxSize().testTag("history-list"), state = listState, reverseLayout = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(messages.asReversed(), key = { it.id }, contentType = { it.type }) { item ->
                 MessageItem(item, showDiff, loadImage, answerQuestion, item.id in state.answeredInputs || questionAnswered(item, state.timeline),
-                    editMessage = editMessage, canEdit = !state.sending && !state.loading && !state.uploading && !state.uncertainSend && state.selectedChat?.archived != true)
+                    editMessage = editMessage, canEdit = !state.sending && !state.loading && !state.uploading && !state.uncertainSend && state.selectedChat?.archived != true,
+                    highlighted = item.id == selectedQuestion)
             }
             if (state.timeline.isEmpty() && state.chatSyncing) item {
                 Row(Modifier.fillMaxWidth().padding(12.dp).testTag("chat-syncing"), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -520,6 +534,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         }
         if (!followTail) FilledTonalIconButton(
             onClick = { scope.launch {
+                selectedQuestion = null
                 if (state.motion) listState.animateScrollToItem(0) else listState.scrollToItem(0)
             } },
             modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp).size(48.dp).testTag("jump-to-latest")
@@ -527,6 +542,28 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             Icon(Icons.Outlined.ArrowDownward, contentDescription = "Jump to latest", modifier = Modifier.size(24.dp))
         }
     }
+    }
+    if (showQuestions) QuestionNavigator(messages, hasOlder, state.olderLoading, state.olderError,
+        state.hiddenOlderCount > 0 || state.connection == "Connected", loadOlder,
+        select = { id ->
+            showQuestions = false
+            selectedQuestion = id
+            jumpingToQuestion = true
+            scope.launch {
+                try {
+                    questionScrollIndex(currentMessages, id)?.let { listState.scrollToItem(it) }
+                    val layout = listState.layoutInfo
+                    val target = layout.visibleItemsInfo.firstOrNull { it.key == id }
+                    if (target != null) {
+                        val viewport = layout.viewportSize.height - layout.beforeContentPadding - layout.afterContentPadding
+                        val offset = questionScrollOffset(target.size, viewport)
+                        // In reverse layout, a positive offset reveals the top of a tall bubble.
+                        if (offset > 0) questionScrollIndex(currentMessages, id)?.let { listState.scrollToItem(it, offset) }
+                    }
+                }
+                finally { jumpingToQuestion = false }
+            }
+        }, close = { showQuestions = false })
 }
 
 @Composable private fun PageLoader(loading: Boolean, error: String?, label: String, enabled: Boolean, retry: () -> Unit) {
@@ -539,7 +576,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 
 @Composable internal fun MessageItem(item: TimelineItem, showDiff: (Change) -> Unit, loadImage: suspend (String) -> ByteArray,
     answerQuestion: (TimelineItem) -> Unit = {}, answered: Boolean = false,
-    editMessage: ((TimelineItem) -> Unit)? = null, canEdit: Boolean = true) {
+    editMessage: ((TimelineItem) -> Unit)? = null, canEdit: Boolean = true, highlighted: Boolean = false) {
     var visibleLimit by rememberSaveable(item.id) { mutableIntStateOf(6000) }
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
     var copied by remember(item.id, item.text) { mutableStateOf(false) }
@@ -548,10 +585,11 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     val user = item.type == "userMessage"; val tool = item.type !in listOf("userMessage", "agentMessage", "finalChanges", "error")
     val finalChanges = item.type == "finalChanges"
     val label = if (user) "YOU" else if (item.type == "finalChanges") "CHANGES" else if (item.type == "error") "ERROR" else if (!tool) "CODEX" else if (item.type == "commandExecution") "COMMAND" else item.type.uppercase()
-    Box(Modifier.fillMaxWidth()) {
+    Box(Modifier.fillMaxWidth().testTag("message:${item.id}")) {
     Surface(modifier = Modifier.fillMaxWidth(if (user) 0.88f else if (item.type == "agentMessage") 0.94f else 1f)
         .align(if (user) AbsoluteAlignment.TopRight else AbsoluteAlignment.TopLeft),
-        color = if (user) MaterialTheme.colorScheme.surfaceVariant else if (tool) MaterialTheme.colorScheme.surface else Color.Transparent, shape = RoundedCornerShape(12.dp)) {
+        color = if (user) MaterialTheme.colorScheme.surfaceVariant else if (tool) MaterialTheme.colorScheme.surface else Color.Transparent,
+        border = if (highlighted) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null, shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.fillMaxWidth().padding(if (tool || user) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (tool || finalChanges) Surface(onClick = { expanded = !expanded }, modifier = Modifier.testTag("${if (finalChanges) "changes" else "command"}:${item.id}"), color = Color.Transparent) {
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
