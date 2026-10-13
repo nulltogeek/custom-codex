@@ -52,13 +52,23 @@ internal suspend fun deleteArchivedChats(chats: List<Chat>, eligible: (Chat) -> 
     }
 }
 
-@Composable internal fun ArchiveSelectionBar(count: Int, deleteEnabled: Boolean, cancel: () -> Unit, delete: () -> Unit) {
+@Composable internal fun ArchiveSelectionBar(count: Int, deleteEnabled: Boolean, allSelected: Boolean,
+    cancel: () -> Unit, delete: () -> Unit, selectAll: () -> Unit) {
     Surface(color = MaterialTheme.colorScheme.primaryContainer) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(cancel) { Icon(Icons.Outlined.Close, "Cancel selection") }
-            Text("$count selected", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            TextButton(delete, enabled = deleteEnabled, modifier = Modifier.testTag("archive-delete-selected")) {
-                Icon(Icons.Outlined.DeleteOutline, null); Spacer(Modifier.width(4.dp)); Text("Delete")
+        Column {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(cancel) { Icon(Icons.Outlined.Close, "Cancel selection") }
+                Text("$count selected", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                TextButton(delete, enabled = deleteEnabled, modifier = Modifier.testTag("archive-delete-selected")) {
+                    Icon(Icons.Outlined.DeleteOutline, null); Spacer(Modifier.width(4.dp)); Text("Delete")
+                }
+            }
+            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(selectAll, modifier = Modifier.testTag("archive-select-all")) {
+                    Text(if (allSelected) "Deselect all" else "Select all")
+                }
+                Spacer(Modifier.width(8.dp))
+                Text("Loaded chats", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

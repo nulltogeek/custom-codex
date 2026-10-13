@@ -2,7 +2,11 @@
 
 In Archived, hold a chat to select it. Selected rows show a checked box and
 highlight. Tap another chat to add it, or tap a selected chat to deselect it.
-A fixed bar shows the selected count and Delete. Delete opens a confirmation
+A fixed bar shows the selected count and Delete. Select all selects every loaded
+chat in the current filtered Archived list; Deselect all clears the selection.
+The control is labelled Loaded chats. Newly loaded or refreshed chats are not
+automatically added to an existing selection; tap Select all again to include
+them. Chats outside the current search/project filter are excluded. Delete opens a confirmation
 for exactly those chats. Cancel closes the dialog while keeping the selection;
 Back or the selection bar's close button exits selection mode.
 
@@ -31,4 +35,4 @@ checks, changing task/queue/context state, partial failures, uncertain replies,
 session expiry and cancellation. `ArchiveSelectionUiTest` covers multi-selection,
 confirmation/cancel, exact targets, swipe suppression, accessible long-press,
 Back, disabled Delete, stale dialogs and filter changes. See
-[0.7.20 verification](mobile-0.7.20-verification.md) for executed checks and limits.
+[0.7.21 verification](mobile-0.7.21-verification.md) for executed checks and limits.

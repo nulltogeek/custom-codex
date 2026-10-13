@@ -107,4 +107,48 @@ class ArchiveSelectionUiTest {
         compose.onNodeWithText("Second archived chat").assertIsDisplayed()
         compose.onNodeWithText("First archived chat").assertDoesNotExist()
     }
+
+    @Test fun selectAllCanBeClearedAndDeletionStillRequiresConfirmation() {
+        val state = state(); var deleted = emptyList<Chat>()
+        render(state, deleted = { deleted = it })
+        selectFirst()
+        compose.onNodeWithText("Select all").assertIsDisplayed().performClick()
+        compose.onNodeWithText("2 selected").assertIsDisplayed()
+        compose.onNodeWithTag("chat-row:one").assertIsSelected()
+        compose.onNodeWithTag("chat-row:two").assertIsSelected()
+        compose.onNodeWithText("Deselect all").performClick()
+        compose.onNodeWithContentDescription("Cancel selection").assertDoesNotExist()
+        selectFirst(); compose.onNodeWithTag("archive-select-all").performClick()
+        compose.onNodeWithTag("archive-delete-selected").performClick()
+        compose.runOnIdle { assertTrue(deleted.isEmpty()) }
+        compose.onNodeWithTag("archive-confirm-delete").performClick()
+        compose.runOnIdle { assertEquals(listOf(first, second), deleted) }
+    }
+
+    @Test fun selectAllOnlyIncludesLoadedChatsInTheCurrentArchiveFilter() {
+        val state = state()
+        val other = first.copy(id = "other", title = "Other project", cwd = "/other")
+        val active = first.copy(id = "active", title = "Active chat", archived = false)
+        state.value = state.value.copy(chats = listOf(first, second, other, active), projectFilter = "p",
+            projects = listOf(Project("p", "Selected project", listOf("/work"))), assignments = mapOf("one" to "p", "two" to "p"))
+        var deleted = emptyList<Chat>(); render(state, deleted = { deleted = it })
+        selectFirst(); compose.onNodeWithTag("archive-select-all").performClick()
+        compose.onNodeWithText("2 selected").assertIsDisplayed()
+        compose.onNodeWithText("Loaded chats").assertIsDisplayed()
+        compose.onNodeWithTag("archive-delete-selected").performClick()
+        compose.onNodeWithTag("archive-confirm-delete").performClick()
+        compose.runOnIdle { assertEquals(listOf(first, second), deleted) }
+    }
+
+    @Test fun newlyLoadedChatsAreOnlySelectedAfterSelectAllIsTappedAgain() {
+        val state = state(); render(state)
+        selectFirst(); compose.onNodeWithTag("archive-select-all").performClick()
+        val third = first.copy(id = "three", title = "Third archived chat")
+        compose.runOnIdle { state.value = state.value.copy(chats = state.value.chats + third) }
+        compose.onNodeWithText("2 selected").assertIsDisplayed()
+        compose.onNodeWithTag("chat-row:three").assertIsNotSelected()
+        compose.onNodeWithText("Select all").performClick()
+        compose.onNodeWithText("3 selected").assertIsDisplayed()
+        compose.onNodeWithTag("chat-row:three").assertIsSelected()
+    }
 }

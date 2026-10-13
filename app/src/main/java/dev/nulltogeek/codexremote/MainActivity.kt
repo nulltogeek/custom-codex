@@ -300,7 +300,9 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     RefreshableLibrary(state, refresh) {
         Column(Modifier.fillMaxSize()) {
             if (selecting) ArchiveSelectionBar(selectedChats.size, canDeleteChats(state, selectedChats),
-                cancel = { selectedIds = emptySet() }, delete = { confirmIds = selectedChats.map { it.id }.toSet() })
+                allSelected = selectedChats.size == list.size,
+                cancel = { selectedIds = emptySet() }, delete = { confirmIds = selectedChats.map { it.id }.toSet() },
+                selectAll = { selectedIds = if (selectedChats.size == list.size) emptySet() else list.map { it.id }.toSet() })
             LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("catalog-list"), state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 item {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

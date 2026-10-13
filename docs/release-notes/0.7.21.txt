@@ -1,0 +1,1 @@
+Add Select all and Deselect all to Archived chat selection. Long-press a chat, then use Select all to select every loaded chat in the current search/project view. Delete still requires confirmation. Newly loaded chats are included only when you tap Select all again.
