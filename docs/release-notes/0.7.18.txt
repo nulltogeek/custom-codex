@@ -1,0 +1,3 @@
+Archive and Restore are now in each chat's three-dot options menu beside Rename chat, including in the open conversation's toolbar.
+Swipe-right archive and restore gestures are removed. Archived chats keep swipe-left Delete.
+Archive, Restore and Delete retain their confirmation dialogs and protections for running tasks.

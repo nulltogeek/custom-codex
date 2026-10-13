@@ -31,7 +31,8 @@ internal fun cachedChatWithProject(raw: JsonObject, projectId: String) = JsonObj
 internal fun inventoryWithChatProject(raw: JsonObject, chatId: String, projectId: String) = JsonObject(raw +
     ("assignments" to JsonObject(raw.obj("assignments") + (chatId to JsonPrimitive(projectId)))))
 
-@Composable internal fun ChatOptionsMenu(chat: Chat, renameEnabled: Boolean, moveEnabled: Boolean, rename: () -> Unit, move: () -> Unit) {
+@Composable internal fun ChatOptionsMenu(chat: Chat, renameEnabled: Boolean, moveEnabled: Boolean, rename: () -> Unit, move: () -> Unit,
+    archiveEnabled: Boolean, archive: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { expanded = true }) { Icon(Icons.Outlined.MoreVert, "Options for chat ${chat.title}", Modifier.size(20.dp)) }
@@ -40,6 +41,9 @@ internal fun inventoryWithChatProject(raw: JsonObject, chatId: String, projectId
                 onClick = { expanded = false; rename() }, enabled = renameEnabled)
             DropdownMenuItem(text = { Text("Move to project") }, leadingIcon = { Icon(Icons.Outlined.FolderOpen, null) },
                 onClick = { expanded = false; move() }, enabled = moveEnabled)
+            DropdownMenuItem(text = { Text(if (chat.archived) "Restore chat" else "Archive chat") },
+                leadingIcon = { Icon(if (chat.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, null) },
+                onClick = { expanded = false; archive() }, enabled = archiveEnabled)
         }
     }
 }

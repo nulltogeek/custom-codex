@@ -1,6 +1,6 @@
 # Codex Remote for Android
 
-A native Android 11+ client for a Codex app-server on your Linux machine. Supports chats, projects, streaming, model controls, approvals, terminal output and diffs, with formatted code, file/image attachments, coding/conversation modes, access presets, message queues with editing and reordering, message copy controls, a command activity heartbeat, favorites, right-swipe archive, bottom navigation, archived chat restore and confirmed deletion, task completion notifications, password changes, five color accents, optional screen transitions and in-app APK updates.
+A native Android 11+ client for a Codex app-server on your Linux machine. Supports chats, projects, streaming, model controls, approvals, terminal output and diffs, with formatted code, file/image attachments, coding/conversation modes, access presets, message queues with editing and reordering, message copy controls, a command activity heartbeat, favorites, archive/restore menu actions, bottom navigation, archived chat restore and confirmed deletion, task completion notifications, password changes, five color accents, optional screen transitions and in-app APK updates.
 
 ## Host setup
 

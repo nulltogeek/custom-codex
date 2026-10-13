@@ -12,10 +12,11 @@ class MovingChatsUiTest {
     @Test fun chatOptionsExposeRenameAndMoveWithoutOpeningTheChat() {
         var moved = false
         compose.activityRule.scenario.onActivity { activity -> activity.setContent {
-            RemoteTheme("dark") { ChatOptionsMenu(Chat("c", "Title", "", ""), true, true, {}, { moved = true }) }
+            RemoteTheme("dark") { ChatOptionsMenu(Chat("c", "Title", "", ""), true, true, {}, { moved = true }, true, {}) }
         } }
         compose.onNodeWithContentDescription("Options for chat Title").performClick()
         compose.onNodeWithText("Rename chat").assertIsDisplayed()
+        compose.onNodeWithText("Archive chat").assertIsDisplayed()
         compose.onNodeWithText("Move to project").performClick()
         compose.runOnIdle { assertTrue(moved) }
         compose.onNodeWithText("Move to project").assertDoesNotExist()

@@ -154,10 +154,10 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 if (state.signedIn) {
                     IconButton(onClick = { vm.refresh() }, enabled = canRefreshHistory(state)) { Icon(Icons.Outlined.Refresh, "Refresh history") }
                     state.selectedChat?.let { chat ->
-                        ChatOptionsMenu(chat, canRename(state), canMoveChat(state), { vm.beginRename(chat) }, { vm.beginMoveChat(chat) })
+                        ChatOptionsMenu(chat, canRename(state), canMoveChat(state), { vm.beginRename(chat) }, { vm.beginMoveChat(chat) },
+                            canArchive(state, chat), { confirmArchive = chat })
                         FavoriteButton(state.favoriteChats.any { it.id == chat.id }, "chat ${chat.title}") { vm.favorite(chat) }
                         if (chat.archived) IconButton(onClick = { confirmDelete = chat }, enabled = canDeleteChat(state, chat)) { Icon(Icons.Outlined.DeleteOutline, "Delete chat") }
-                        IconButton(onClick = { confirmArchive = chat }, enabled = canArchive(state, chat)) { Icon(if (chat.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, if (chat.archived) "Restore chat" else "Archive chat") }
                     }
                 }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
@@ -311,10 +311,10 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             if (list.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (archivedOnly) "No archived chats" else if (tab == 3) "No favorite chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (archivedOnly) "Chats you archive appear here. Open one to read or restore it." else if (tab == 3) "Tap a chat's star to keep it here." else "Choose a project or start a conversation.") }
             items(list, key = { it.id }, contentType = { "chat" }) { chat ->
                 val p = state.projects.find { chatBelongsToProject(chat, it, state.assignments) }
-                SwipeArchiveRow(chat, canArchive(state, chat), archive = { archive(chat) },
-                    deleteEnabled = canDeleteChat(state, chat), delete = { delete(chat) }) {
+                SwipeDeleteRow(chat, canDeleteChat(state, chat), delete = { delete(chat) }) {
                     ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { vm.open(chat) },
-                        renameEnabled = canRename(state), onRename = { rename(chat) }, moveEnabled = canMoveChat(state), onMove = { move(chat) })
+                        renameEnabled = canRename(state), onRename = { rename(chat) }, moveEnabled = canMoveChat(state), onMove = { move(chat) },
+                        archiveEnabled = canArchive(state, chat), onArchive = { archive(chat) })
                 }
             }
             if (page != null) item(key = "catalog-footer") {
@@ -341,7 +341,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 }
 
 @Composable private fun ChatRow(chat: Chat, project: String, favorite: Boolean, onFavorite: () -> Unit, onClick: () -> Unit,
-    renameEnabled: Boolean, onRename: () -> Unit, moveEnabled: Boolean, onMove: () -> Unit) {
+    renameEnabled: Boolean, onRename: () -> Unit, moveEnabled: Boolean, onMove: () -> Unit, archiveEnabled: Boolean, onArchive: () -> Unit) {
     Surface(onClick = onClick, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(10.dp)) {
@@ -363,7 +363,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 }
             }
             FavoriteButton(favorite, "chat ${chat.title}", onFavorite)
-            ChatOptionsMenu(chat, renameEnabled, moveEnabled, onRename, onMove)
+            ChatOptionsMenu(chat, renameEnabled, moveEnabled, onRename, onMove, archiveEnabled, onArchive)
         }
     }
 }

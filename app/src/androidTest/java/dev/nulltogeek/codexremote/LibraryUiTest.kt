@@ -35,54 +35,55 @@ class LibraryUiTest {
         capture.recycle()
     }
 
-    @Test fun rightSwipeRequestsArchiveLeftSwipeAndDisabledRowsDoNot() {
+    @Test fun archiveUsesTheOptionsMenuAndRightSwipeDoesNothing() {
         var requests = 0
-        val chat = Chat("swipe", "Swipe me", "", "", status = "idle")
-        val enabled = mutableStateOf(true)
-        render { Column {
-            SwipeArchiveRow(chat, enabled.value, { requests++ }) {
-                Surface { Text("Swipe me", Modifier.fillMaxWidth().padding(24.dp)) }
-            }
-        } }
-        compose.onNodeWithTag("archive-swipe:swipe").performTouchInput { swipeLeft() }
+        val chat = Chat("swipe", "Menu fixture", "", "", status = "idle")
+        val state = mutableStateOf(ScreenState(connection = "Connected", chats = listOf(chat)))
+        val vm = RemoteViewModel(compose.activity.application)
+        render { ChatsScreen(state.value, vm, approval = {}, archive = { requests++ }) }
+        val row = compose.onNodeWithTag("delete-swipe:swipe").performScrollTo()
+        row.performTouchInput { swipeRight() }
+        row.performTouchInput { swipeLeft() }
         compose.waitForIdle(); assertEquals(0, requests)
-        compose.onNodeWithTag("archive-swipe:swipe").performTouchInput { swipeRight() }
-        compose.waitUntil(10000) { requests > 0 }
-        assertEquals(1, requests)
-        compose.onNodeWithText("Swipe me").assertIsDisplayed()
-        compose.runOnIdle { enabled.value = false }
-        compose.onNodeWithTag("archive-swipe:swipe").performTouchInput { swipeRight() }
-        compose.waitForIdle(); assertEquals(1, requests)
+        compose.onNodeWithContentDescription("Options for chat Menu fixture").performClick()
+        compose.onNodeWithText("Rename chat").assertIsDisplayed()
+        compose.onNodeWithText("Archive chat").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(1, requests) }
+        compose.onNodeWithText("Archive chat").assertDoesNotExist()
+        compose.runOnIdle { state.value = state.value.copy(connection = "Offline") }
+        compose.onNodeWithContentDescription("Options for chat Menu fixture").performClick()
+        compose.onNodeWithText("Archive chat").assertIsNotEnabled()
     }
 
-    @Test fun archivedSwipesRequestRestoreAndDeleteInBothLayoutDirections() {
+    @Test fun archivedRowsOnlySwipeLeftToDeleteInBothLayoutDirections() {
         val rtl = mutableStateOf(false)
         val deleteEnabled = mutableStateOf(true)
-        var restores = 0; var deletes = 0
+        var deletes = 0
         val chat = Chat("two-way", "Archived fixture", "", "", archived = true)
         render { CompositionLocalProvider(LocalLayoutDirection provides if (rtl.value) LayoutDirection.Rtl else LayoutDirection.Ltr) {
-            SwipeArchiveRow(chat, true, { restores++ }, deleteEnabled.value, { deletes++ }) {
+            SwipeDeleteRow(chat, deleteEnabled.value, { deletes++ }) {
                 Surface { Text("Archived fixture", Modifier.fillMaxWidth().padding(24.dp)) }
             }
         } }
-        val row = compose.onNodeWithTag("archive-swipe:two-way")
+        val row = compose.onNodeWithTag("delete-swipe:two-way")
         row.performTouchInput { swipeLeft() }
         compose.waitUntil(10000) { deletes == 1 }; compose.waitForIdle()
         row.performTouchInput { swipeRight() }
-        compose.waitUntil(10000) { restores == 1 }; compose.waitForIdle()
+        compose.waitForIdle(); assertEquals(1, deletes)
         compose.onNodeWithText("Archived fixture").assertIsDisplayed()
+        val actions = row.fetchSemanticsNode().config[SemanticsActions.CustomActions]
+        assertEquals(listOf("Delete chat"), actions.map { it.label })
+        compose.runOnIdle { actions.single().action() }
+        assertEquals(2, deletes)
         compose.runOnIdle { rtl.value = true }
         row.performTouchInput { swipeLeft() }
-        compose.waitUntil(10000) { deletes == 2 }; compose.waitForIdle()
+        compose.waitUntil(10000) { deletes == 3 }; compose.waitForIdle()
         row.performTouchInput { swipeRight() }
-        compose.waitUntil(10000) { restores == 2 }; compose.waitForIdle()
+        compose.waitForIdle(); assertEquals(3, deletes)
         compose.runOnIdle { deleteEnabled.value = false }
         row.performTouchInput { swipeLeft() }
-        compose.waitForIdle(); assertEquals(2, deletes)
-        val actions = row.fetchSemanticsNode().config[SemanticsActions.CustomActions]
-        assertEquals(listOf("Restore chat"), actions.map { it.label })
-        compose.runOnIdle { actions.single().action() }
-        assertEquals(3, restores)
+        compose.waitForIdle(); assertEquals(3, deletes)
+        assertTrue(row.fetchSemanticsNode().config[SemanticsActions.CustomActions].isEmpty())
     }
 
     @Test fun chatFavoritesShowUnpagedSavedChatsAndAllowRemoval() {
@@ -118,12 +119,14 @@ class LibraryUiTest {
         compose.onNodeWithText("Archived agent").assertIsDisplayed()
         compose.onNodeWithText("Active conversation").assertDoesNotExist()
         compose.onNodeWithText("Other project archive").assertDoesNotExist()
-        compose.onNodeWithTag("archive-swipe:archive").performTouchInput { swipeLeft() }
+        compose.onNodeWithTag("delete-swipe:archive").performTouchInput { swipeLeft() }
         compose.waitUntil(10000) { delete != null }
         compose.runOnIdle { assertEquals(archived, delete) }
-        compose.onNodeWithTag("archive-swipe:archive").performTouchInput { swipeRight() }
-        compose.waitUntil(10000) { restore != null }
-        assertEquals(archived, restore)
+        compose.onNodeWithTag("delete-swipe:archive").performTouchInput { swipeRight() }
+        compose.waitForIdle(); assertNull(restore)
+        compose.onNodeWithContentDescription("Options for chat Archived conversation").performClick()
+        compose.onNodeWithText("Restore chat").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(archived, restore) }
         compose.runOnIdle { state.value = state.value.copy(chats = emptyList()) }
         compose.onNodeWithText("No archived chats").assertIsDisplayed()
     }
@@ -162,7 +165,8 @@ class LibraryUiTest {
         compose.onNodeWithContentDescription("Delete chat").performClick()
         compose.onNodeWithText("Delete this chat permanently?").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()
-        compose.onNodeWithContentDescription("Restore chat").performClick()
+        compose.onNodeWithContentDescription("Options for chat Saved conversation").performClick()
+        compose.onNodeWithText("Restore chat").performClick()
         compose.onNodeWithText("Restore this chat?").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()
         compose.onNodeWithContentDescription("Back").performClick()

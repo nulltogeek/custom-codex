@@ -41,8 +41,8 @@ an accessible “Jump to latest” label without visible text.
 
 Tap **Archived** in the bottom menu to browse archived chats, including agent
 chats. Search and project filters apply to this section, and older archived
-pages load as you scroll. Open a chat and tap **Restore chat**, or swipe right
-on its row, to review the restore confirmation. Back returns to Archived.
+pages load as you scroll. Open the chat's three-dot menu and choose **Restore chat**
+to review the restore confirmation. Back returns to Archived.
 
 Stop sits beside Send. Sending during work queues the next message; see
 [message queue controls and delivery behavior](message-queue.md).
@@ -63,9 +63,11 @@ Deleting a chat invalidates old pagination requests and reloads the catalogue, s
 offset cursors cannot skip a conversation after the deleted row disappears.
 Deleted IDs also stay excluded from delayed events and saved cache updates.
 
-Chat rows use swipe actions without a permanent action bar: swipe right to archive
-an active chat or restore an archived chat, and swipe left to delete an archived
-chat. The directions stay the same in right-to-left layouts. Both actions open
-their confirmation dialogs; rows return to their resting position. Delete remains
-unavailable for active, busy or queued chats. Screen-reader custom actions and
-the conversation toolbar provide access to the same confirmations.
+Archive and Restore appear beside Rename chat and Move to project in each chat's
+three-dot menu, including the open conversation's toolbar. Archive appears for
+active-library chats; Restore appears for archived chats. Both require a connected,
+idle chat with no pending input and open the existing confirmation dialog.
+Swiping right has no archive or restore action. Archived chats retain swipe-left
+Delete, including in right-to-left layouts, with confirmation and a screen-reader
+custom action. Delete remains unavailable for active, busy or queued chats.
+This menu change is published in [0.7.18 / code 26](mobile-0.7.18-verification.md).

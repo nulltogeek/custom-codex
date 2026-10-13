@@ -48,40 +48,31 @@ internal fun withoutDeletedChat(state: ScreenState, id: String): ScreenState {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable internal fun SwipeArchiveRow(chat: Chat, enabled: Boolean, archive: () -> Unit,
-    deleteEnabled: Boolean = false, delete: () -> Unit = {}, content: @Composable () -> Unit) {
-    val latestArchive by rememberUpdatedState(archive)
+@Composable internal fun SwipeDeleteRow(chat: Chat, enabled: Boolean, delete: () -> Unit, content: @Composable () -> Unit) {
     val latestDelete by rememberUpdatedState(delete)
     val latestEnabled by rememberUpdatedState(enabled)
-    val latestDeleteEnabled by rememberUpdatedState(deleteEnabled)
-    // These are physical right/left gestures in either layout direction.
-    val rightSwipe = if (LocalLayoutDirection.current == LayoutDirection.Ltr) SwipeToDismissBoxValue.StartToEnd else SwipeToDismissBoxValue.EndToStart
-    val leftSwipe = if (rightSwipe == SwipeToDismissBoxValue.StartToEnd) SwipeToDismissBoxValue.EndToStart else SwipeToDismissBoxValue.StartToEnd
-    val latestRightSwipe by rememberUpdatedState(rightSwipe)
+    // Delete remains a physical left gesture in either layout direction.
+    val leftSwipe = if (LocalLayoutDirection.current == LayoutDirection.Ltr) SwipeToDismissBoxValue.EndToStart else SwipeToDismissBoxValue.StartToEnd
+    val latestLeftSwipe by rememberUpdatedState(leftSwipe)
     val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { target ->
-        if (target != SwipeToDismissBoxValue.Settled) {
-            if (target == latestRightSwipe && latestEnabled) latestArchive()
-            else if (target != latestRightSwipe && latestDeleteEnabled) latestDelete()
-        }
+        if (target == latestLeftSwipe && latestEnabled) latestDelete()
         // Confirmation owns the action; the row returns to its resting position.
         false
     }, positionalThreshold = { it * 0.35f })
-    SwipeToDismissBox(swipe, modifier = Modifier.testTag("archive-swipe:${chat.id}").semantics {
+    SwipeToDismissBox(swipe, modifier = Modifier.testTag("delete-swipe:${chat.id}").semantics {
         customActions = buildList {
-            if (enabled) add(CustomAccessibilityAction(if (chat.archived) "Restore chat" else "Archive chat") { latestArchive(); true })
-            if (deleteEnabled) add(CustomAccessibilityAction("Delete chat") { latestDelete(); true })
+            if (enabled) add(CustomAccessibilityAction("Delete chat") { latestDelete(); true })
         }
-    }, enableDismissFromStartToEnd = if (rightSwipe == SwipeToDismissBoxValue.StartToEnd) enabled else deleteEnabled,
-        enableDismissFromEndToStart = if (rightSwipe == SwipeToDismissBoxValue.EndToStart) enabled else deleteEnabled,
-        gesturesEnabled = enabled || deleteEnabled,
+    }, enableDismissFromStartToEnd = leftSwipe == SwipeToDismissBoxValue.StartToEnd && enabled,
+        enableDismissFromEndToStart = leftSwipe == SwipeToDismissBoxValue.EndToStart && enabled,
+        gesturesEnabled = enabled,
         backgroundContent = {
-            val deleting = swipe.dismissDirection == leftSwipe
             val colors = MaterialTheme.colorScheme
-            Surface(color = if (deleting) colors.errorContainer else colors.primaryContainer, shape = RoundedCornerShape(14.dp)) {
+            Surface(color = colors.errorContainer, shape = RoundedCornerShape(14.dp)) {
                 Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = if ((if (deleting) leftSwipe else rightSwipe) == SwipeToDismissBoxValue.StartToEnd) Arrangement.Start else Arrangement.End) {
-                    Icon(if (deleting) Icons.Outlined.DeleteOutline else if (chat.archived) Icons.Outlined.Unarchive else Icons.Outlined.Archive, null)
-                    Spacer(Modifier.width(8.dp)); Text(if (deleting) "Delete" else if (chat.archived) "Restore" else "Archive")
+                    horizontalArrangement = if (leftSwipe == SwipeToDismissBoxValue.StartToEnd) Arrangement.Start else Arrangement.End) {
+                    Icon(Icons.Outlined.DeleteOutline, null)
+                    Spacer(Modifier.width(8.dp)); Text("Delete")
                 }
             }
         }) { content() }
