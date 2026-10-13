@@ -58,4 +58,5 @@ and instrumentation APK compilation:
   :app:assembleRelease :app:assembleDebugAndroidTest
 ```
 
-Device navigation tests and app update publication remain unverified/pending.
+Device navigation tests remain unverified. The navigation fixes are published in
+[0.7.17 / code 25](mobile-0.7.17-verification.md).

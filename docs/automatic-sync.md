@@ -41,5 +41,6 @@ bandwidth-sensitive event filtering and stale account/backend/read rejection.
 
 Verified on 2026-10-13: 180 JVM tests passed with no failures or skips; Android
 lint, debug/release APK assembly and instrumentation APK compilation passed.
-Device navigation tests were not run. Publication of an updated APK remains
-pending; these source changes do not update an already-installed APK.
+Device navigation tests were not run. These changes are published in
+[0.7.17 / code 25](mobile-0.7.17-verification.md); install that update to receive
+them on an existing phone installation.

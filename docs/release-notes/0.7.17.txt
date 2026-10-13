@@ -1,0 +1,5 @@
+Chats and projects update automatically when opened, with cached content shown immediately and automatic retries for temporary failures.
+Queued messages keep sending to their original chat while you browse another chat or project.
+Adds project creation, chat/project renaming, moving chats between projects, and restored bottom navigation.
+Recoverable information messages disappear when their problem is resolved.
+Settings includes an option to reduce bandwidth by skipping command output downloads. Project management and command-output filtering require the updated host backend.
