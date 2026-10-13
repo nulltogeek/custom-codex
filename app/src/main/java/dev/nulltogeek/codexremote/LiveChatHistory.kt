@@ -8,18 +8,34 @@ internal data class LiveChatSnapshot(
     val sequence: Long = 0, val turnSequence: Long = 0, val activeTurnId: String = "",
     val turnStatuses: Map<String, String> = emptyMap(),
     val turnSequences: Map<String, Long> = emptyMap(),
+    val itemAliases: Map<String, String> = emptyMap(), val historySequence: Long = 0,
 ) {
+    fun canonical(item: TimelineItem): TimelineItem = itemAliases[item.id]?.let { item.copy(id = it) } ?: item
+
+    fun reconciled(history: List<TimelineItem>, cutoff: Long): LiveChatSnapshot {
+        val normalized = timeline.map(::canonical)
+        val renamed = userMessageAliases(history, normalized)
+        val aliases = (itemAliases.mapValues { (_, id) -> renamed[id] ?: id } + renamed).filter { it.key != it.value }
+        val versions = itemSequences.entries.groupBy { aliases[it.key] ?: it.key }.mapValues { (_, entries) -> entries.maxOf { it.value } }
+        val savedIds = history.map { it.id }.toSet()
+        val items = normalized.map { renamed[it.id]?.let { id -> it.copy(id = id) } ?: it }.filterNot { item ->
+            item.id !in savedIds && (versions[item.id] ?: 0) <= cutoff && history.any { sameUserInput(it, item) }
+        }
+        return copy(timeline = items, itemSequences = versions, itemAliases = aliases)
+    }
+
     fun merge(history: List<TimelineItem>, cutoff: Long, running: Boolean? = null): List<TimelineItem> {
+        val canonicalSnapshot = reconciled(history, cutoff)
         val historyStatuses = history.associate { it.turnId to it.turnStatus }
-        val turns = (history.map { it.turnId } + timeline.map { it.turnId }).distinct()
+        val turns = (history.map { it.turnId } + canonicalSnapshot.timeline.map { it.turnId }).distinct()
         return turns.flatMap { turn ->
-            val local = timeline.filter { it.turnId == turn }
+            val local = canonicalSnapshot.timeline.filter { it.turnId == turn }
             val merged = history.filter { it.turnId == turn }.toMutableList()
             local.forEachIndexed { index, observed ->
                 val existing = merged.indexOfFirst { it.id == observed.id }
                 if (existing >= 0) {
                     val saved = merged[existing]
-                    val newer = (itemSequences[observed.id] ?: 0) > cutoff
+                    val newer = (canonicalSnapshot.itemSequences[observed.id] ?: 0) > cutoff
                     // A snapshot watermark does not guarantee that active command output was saved.
                     val fullerCommand = saved.type == "commandExecution" && saved.turnStatus == "inProgress" &&
                         !saved.commandOutputOmitted && !observed.commandOutputOmitted &&
@@ -72,7 +88,7 @@ internal class LiveChatHistory(private val maxChats: Int = 8, private val maxIte
     /** Seed saved prefixes so later output deltas append to the complete command. */
     @Synchronized fun remember(id: String, history: List<TimelineItem>, cutoff: Long, session: String, epoch: String) {
         if (this.session != session || this.epoch != epoch) return
-        val before = chats[id] ?: LiveChatSnapshot()
+        val before = (chats[id] ?: LiveChatSnapshot()).reconciled(history, cutoff)
         val merged = before.merge(history, cutoff).takeLast(maxItems)
         val savedItems = history.associateBy { it.id }
         val versions = merged.associate { item ->
@@ -88,7 +104,7 @@ internal class LiveChatHistory(private val maxChats: Int = 8, private val maxIte
         val active = before.activeTurnId.takeIf { statuses[it] == "inProgress" }
             ?: merged.lastOrNull { it.turnStatus == "inProgress" }?.turnId.orEmpty()
         retain(id, before.copy(timeline = merged, itemSequences = versions, activeTurnId = active,
-            turnStatuses = statuses, turnSequences = turnVersions))
+            turnStatuses = statuses, turnSequences = turnVersions, historySequence = maxOf(before.historySequence, cutoff)))
     }
 
     @Synchronized fun accept(event: JsonObject, session: String, epoch: String) {
@@ -97,13 +113,21 @@ internal class LiveChatHistory(private val maxChats: Int = 8, private val maxIte
         val method = event.text("method")
         if (method !in listOf("turn/started", "turn/completed", "turn/diff/updated", "item/started", "item/completed",
             "item/agentMessage/delta", "item/commandExecution/outputDelta", "item/reasoning/summaryTextDelta")) return
-        val params = event.obj("params")
+        var params = event.obj("params")
         val id = params.text("threadId")
         if (id.isBlank()) return
-        val before = chats[id] ?: LiveChatSnapshot()
+        var before = chats[id] ?: LiveChatSnapshot()
         val sequence = event["_bridgeSequence"]?.jsonPrimitive?.longOrNull ?: 0
         if (sequence <= before.sequence) return
         val turn = params.text("turnId").ifEmpty { params.obj("turn").text("id") }.ifEmpty { before.activeTurnId }
+        if (method in listOf("item/started", "item/completed") && sequence <= before.historySequence) {
+            val incoming = parseItem(params.obj("item"), turn)
+            if (incoming.id !in before.itemAliases) {
+                val aliases = userMessageAliases(before.timeline, listOf(incoming), before.itemAliases.values.toSet())
+                before = before.copy(itemAliases = before.itemAliases + aliases)
+            }
+        }
+        params = canonicalTimelineParams(params, before.itemAliases)
         var active = before.activeTurnId
         var statuses = before.turnStatuses
         var turnSequence = before.turnSequence
@@ -121,8 +145,8 @@ internal class LiveChatHistory(private val maxChats: Int = 8, private val maxIte
         val items = (if (alreadySaved) before.timeline else reduceTimeline(before.timeline, method, params, before.activeTurnId)).takeLast(maxItems)
             .map { item -> statuses[item.turnId]?.let { item.copy(turnStatus = it) } ?: item }
         val versions = if (item.isEmpty() || alreadySaved) before.itemSequences else before.itemSequences + (item to sequence)
-        retain(id, LiveChatSnapshot(items, versions, sequence, turnSequence, active,
-            statuses, turnVersions))
+        retain(id, before.copy(timeline = items, itemSequences = versions, sequence = sequence, turnSequence = turnSequence,
+            activeTurnId = active, turnStatuses = statuses, turnSequences = turnVersions))
     }
 
     private fun retain(id: String, snapshot: LiveChatSnapshot) {
@@ -131,7 +155,8 @@ internal class LiveChatHistory(private val maxChats: Int = 8, private val maxIte
         chats.remove(id)
         chats[id] = snapshot.copy(itemSequences = snapshot.itemSequences.filterKeys { it in ids },
             turnStatuses = snapshot.turnStatuses.filterKeys { it in retainedTurns },
-            turnSequences = snapshot.turnSequences.filterKeys { it in retainedTurns })
+            turnSequences = snapshot.turnSequences.filterKeys { it in retainedTurns },
+            itemAliases = snapshot.itemAliases.entries.filter { it.value in ids }.takeLast(maxItems * 2).associate { it.toPair() })
         while (chats.size > maxChats) chats.remove(chats.keys.first())
     }
 }

@@ -641,8 +641,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         if (loaded.authoritative) liveHistory.remember(id, parseTimeline(raw), cutoff, request.session, request.epoch)
         mutable.update { current ->
             if (!current() || current.selectedChat?.id != id || current.historyRevision != revision) current else {
-                val newer = current.timeline.filter { (current.itemSequences[it.id] ?: 0) > cutoff }.associateBy { it.id }
                 val live = liveHistory.snapshot(id, store.sessionIdentity, lastEpoch)
+                val newer = current.timeline.filter { (current.itemSequences[it.id] ?: 0) > cutoff }.map(live::canonical).associateBy { it.id }
                 val metadata = reconcileChatMetadata(current, parseChat(raw, current.selectedChat.archived), loaded.metadataSequence)
                 val saved = if (loaded.authoritative) parseTimeline(raw) else cachedThreads[id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
                 val running = metadata.selectedChat?.status?.let { if (it == "notLoaded") null else it == "active" }
@@ -1186,8 +1186,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
                 if (state.selectedChat?.id == threadId && sequence > state.snapshotSequence) {
-                    val itemId = p.text("itemId").ifEmpty { p.obj("item").text("id") }
-                    state = state.copy(timeline = reduceTimeline(state.timeline, method, p, state.activeTurnId), threadSequence = sequence,
+                    val live = liveHistory.snapshot(threadId, store.sessionIdentity, lastEpoch)
+                    val timelineParams = canonicalTimelineParams(p, live.itemAliases)
+                    val itemId = timelineParams.text("itemId").ifEmpty { timelineParams.obj("item").text("id") }
+                    state = state.copy(timeline = reduceTimeline(state.timeline.map(live::canonical).distinctBy { it.id }, method, timelineParams, state.activeTurnId), threadSequence = sequence,
                         itemSequences = if (itemId.isNotEmpty()) state.itemSequences + (itemId to sequence) else state.itemSequences)
                     if (method == "turn/started") state = state.copy(lastTurnStatus = "inProgress")
                     if (method == "turn/started") state = state.copy(activeTurnId = p.obj("turn").text("id"))

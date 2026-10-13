@@ -1,0 +1,1 @@
+Fix sent messages appearing twice when live events and saved history use different item IDs. Refreshing, reopening and late completion events now keep one message bubble. Repeated messages in different turns and messages with different attachments remain separate. Saved message identity is retained for editing.

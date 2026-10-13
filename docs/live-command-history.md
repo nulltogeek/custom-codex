@@ -23,3 +23,9 @@ output. There are no additional RPCs, downloads or history polling.
 and completion in another chat, duplicate replay, ordering, stale status,
 output preferences, hydration, account/epoch isolation, cleanup, bounds and
 expanded history windows. See [0.7.19 verification](mobile-0.7.19-verification.md).
+
+From 0.7.22, user messages from live events and saved history are matched by
+turn and input when their item IDs differ. The saved ID remains canonical for
+editing and later completion events. Repeated inputs in different turns,
+separate occurrences and different attachments remain separate. See
+[message identity](message-identity.md).
