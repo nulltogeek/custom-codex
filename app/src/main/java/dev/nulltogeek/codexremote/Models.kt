@@ -67,6 +67,7 @@ data class ScreenState(
     val snapshotSequence: Long = 0, val itemSequences: Map<String, Long> = emptyMap(), val threadSequence: Long = 0,
     val searchTerm: String = "", val olderCursor: String? = null,
     val historyRevision: Long = 0, val hiddenOlderCount: Int = 0, val olderLoading: Boolean = false, val olderError: String? = null,
+    val chatSyncing: Boolean = false,
     val lastTurnStatus: String = "",
     val statusSequence: Long = 0, val titleSequence: Long = 0, val pendingSequence: Long = 0,
     val attachments: List<Attachment> = emptyList(), val uploading: Boolean = false,

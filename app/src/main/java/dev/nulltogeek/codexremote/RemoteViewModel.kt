@@ -22,6 +22,11 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var searchJob: Job? = null
     private var updateJob: Job? = null
     private var olderJob: Job? = null
+    private var chatSyncJob: Job? = null
+    private var libraryRetryJob: Job? = null
+    private val chatSyncGeneration = java.util.concurrent.atomic.AtomicLong()
+    private val threadReads = SyncReads()
+    private val libraryEvents = java.util.concurrent.atomic.AtomicLong()
     private val catalogMutex = kotlinx.coroutines.sync.Mutex()
     private val inputMutex = kotlinx.coroutines.sync.Mutex()
     private val commandOutputMutex = kotlinx.coroutines.sync.Mutex()
@@ -37,6 +42,28 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private val deletedChats = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val uncertainChats = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val sourceKinds = listOf("cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown")
+    private val librarySync: AutomaticSync = AutomaticSync(viewModelScope + Dispatchers.IO) {
+        if (foreground && needsLibrarySync(mutable.value)) {
+            val identity = store.sessionIdentity
+            try {
+                refreshLibrary()
+                libraryRetryJob?.cancel()
+            } catch (e: Exception) {
+                if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                if (identity == store.sessionIdentity && foreground) {
+                    if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
+                    else {
+                        mutable.update { it.withInfoNotice(NoticeKey(NoticeKind.Catalog), "Could not update chats and projects. Retrying automatically.") }
+                        libraryRetryJob?.cancel()
+                        libraryRetryJob = viewModelScope.launch(Dispatchers.IO) {
+                            delay(3000)
+                            if (identity == store.sessionIdentity && foreground && needsLibrarySync(mutable.value)) librarySync.request()
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -94,7 +121,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     if (lastEpoch != snapshot.text("epoch")) mutable.update { it.copy(snapshotSequence = 0, itemSequences = emptyMap(), threadSequence = 0, statusSequence = 0, titleSequence = 0, pendingSequence = 0) }
                     lastEpoch = snapshot.text("epoch"); applySnapshot(snapshot)
                     checkAppUpdate(automatic = true)
-                    refreshAll()
+                    requestChatSync()
+                    refreshAll(syncChat = false)
                     while (foreground && rpc.status.value == "Connected") delay(500)
                     if (rpc.status.value == "Session expired") throw SessionExpiredException()
                 } catch (e: Exception) {
@@ -107,7 +135,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
     fun onBackground() { foreground = false; disconnect() }
-    private fun disconnect() { reconnect?.cancel(); reconnect = null; rpc.close() }
+    private fun disconnect() {
+        reconnect?.cancel(); reconnect = null; cancelChatSync(); libraryRetryJob?.cancel(); rpc.close()
+        mutable.update { it.copy(chatSyncing = false) }
+    }
     fun signIn(endpoint: String, username: String, password: String) = action {
         val cleaned = endpoint.trim().trimEnd('/')
         val session = rpc.login(cleaned, username.trim(), password)
@@ -280,8 +311,51 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
     private fun saveChatOptions() { val state = mutable.value; store.chatOptions(state.selectedChat?.id ?: "new", state.chatMode, state.accessMode) }
     private fun mobileParams(state: ScreenState) = buildJsonObject { put("mobileMode", state.chatMode); put("accessMode", state.accessMode) }
-    fun page(value: String) { mutable.update { it.copy(page = value, selectedChat = null, diff = null) } }
-    fun filterProject(id: String?) { mutable.update { it.copy(page = if (id == null && it.page == "archived") "archived" else "chats", projectFilter = id, selectedChat = null) } }
+    fun page(value: String) {
+        cancelChatSync()
+        mutable.update { it.copy(page = value, selectedChat = null, diff = null, chatSyncing = false) }
+        requestLibrarySync()
+    }
+    fun filterProject(id: String?) {
+        cancelChatSync()
+        mutable.update { it.copy(page = if (id == null && it.page == "archived") "archived" else "chats", projectFilter = id, selectedChat = null, chatSyncing = false) }
+        requestLibrarySync()
+    }
+    private fun requestLibrarySync(immediate: Boolean = true) {
+        if (foreground && needsLibrarySync(mutable.value)) librarySync.request(immediate)
+    }
+    @Synchronized private fun cancelChatSync() {
+        chatSyncGeneration.incrementAndGet()
+        chatSyncJob?.cancel(); chatSyncJob = null
+        mutable.update { it.copy(chatSyncing = false) }
+    }
+    @Synchronized private fun requestChatSync() {
+        val current = mutable.value
+        val id = current.selectedChat?.id ?: return
+        if (!foreground || !current.signedIn || rpc.status.value != "Connected") return
+        val revision = current.historyRevision
+        val identity = store.sessionIdentity
+        cancelChatSync()
+        val generation = chatSyncGeneration.get()
+        mutable.update { it.copy(chatSyncing = true) }
+        chatSyncJob = viewModelScope.launch(Dispatchers.IO) {
+            var retry = 1000L
+            try {
+                while (isActive && foreground && identity == store.sessionIdentity && mutable.value.selectedChat?.id == id &&
+                    mutable.value.historyRevision == revision && rpc.status.value == "Connected") {
+                    try { loadThread(id, revision); break }
+                    catch (e: Exception) {
+                        if (e is CancellationException && e !is TimeoutCancellationException) throw e
+                        if (identity != store.sessionIdentity) break
+                        if (e is SessionExpiredException) { disconnect(); clearSession(e.message); break }
+                        if (identity == store.sessionIdentity && mutable.value.selectedChat?.id == id && mutable.value.historyRevision == revision)
+                            mutable.update { it.withInfoNotice(NoticeKey(NoticeKind.History, id), "Could not update this chat. Retrying automatically.") }
+                        delay(retry); retry = (retry * 2).coerceAtMost(10000)
+                    }
+                }
+            } finally { mutable.update { if (chatSyncGeneration.get() == generation && it.selectedChat?.id == id && it.historyRevision == revision) it.copy(chatSyncing = false) else it } }
+        }
+    }
     fun search(value: String) {
         mutable.update { it.copy(searchTerm = value, catalogRevision = it.catalogRevision + 1, catalogError = null, catalogErrorArchived = null, activeCursor = null, archivedCursor = null) }; searchJob?.cancel()
         val revision = mutable.value.catalogRevision
@@ -446,40 +520,60 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun refreshAll() {
-        mutable.update { it.copy(catalogRevision = it.catalogRevision + 1, catalogError = null, catalogErrorArchived = null, activeCursor = null, archivedCursor = null) }
-        val revision = mutable.value.catalogRevision
-        val query = mutable.value.searchTerm
-        val host = rpc.get("/v1/host"); mutable.update { it.copy(host = host.text("name", "Your computer"),
-            passwordChangeAvailable = host.obj("capabilities")["passwordChange"]?.jsonPrimitive?.booleanOrNull == true) }
-        val inventory = rpc.get("/v1/projects"); cachedInventory = inventory; applyInventory(inventory)
+    private suspend fun refreshLibrary() {
+        val identity = store.sessionIdentity
+        val epoch = lastEpoch
         catalogMutex.withLock {
-            if (mutable.value.catalogRevision != revision) return@withLock
-            val active = listPage(false, null, query); val archived = listPage(true, null, query)
-            if (mutable.value.catalogRevision != revision) return@withLock
-            cachedList = JsonArray(refreshCatalogRows(cachedList, active, archived).filterNot { it.jsonObject.text("id") in deletedChats })
-            mutable.update { if (it.catalogRevision != revision) it else it.copy(chats = mergeCatalogChats(emptyList(), cachedList.map { r -> parseChat(r.jsonObject, r.jsonObject.text("cachedArchived") == "true") }),
-                activeCursor = active.text("nextCursor").ifEmpty { null }, archivedCursor = archived.text("nextCursor").ifEmpty { null }).resolveInfoNotice(NoticeKey(NoticeKind.Search)) }
+            val revision = mutable.value.catalogRevision
+            val query = mutable.value.searchTerm
+            val events = libraryEvents.get()
+            fun current() = identity == store.sessionIdentity && epoch == lastEpoch &&
+                mutable.value.catalogRevision == revision && foreground && rpc.status.value == "Connected"
+            if (!current()) return@withLock
+            val snapshot = readLibrarySnapshot(query, sourceKinds, rpc::get, rpc::call)
+            if (!current()) return@withLock
+            // A change during IO needs a fresh follow-up, not an older status over live events.
+            if (events != libraryEvents.get()) { requestLibrarySync(false); return@withLock }
+            cachedInventory = snapshot.inventory
+            cachedList = JsonArray(refreshCatalogRows(cachedList, snapshot.active, snapshot.archived)
+                .filterNot { it.jsonObject.text("id") in deletedChats })
+            val liveById = snapshot.live.array("data").mapNotNull { r -> (r as? JsonObject)?.let { parseChat(it) } }.associateBy { it.id }
+            val chats = cachedList.map { row ->
+                val chat = parseChat(row.jsonObject, row.jsonObject.text("cachedArchived") == "true")
+                liveById[chat.id]?.copy(archived = chat.archived) ?: chat
+            }
+            mutable.update { if (!current() || events != libraryEvents.get()) it else it.withInventory(snapshot.inventory).copy(chats = mergeCatalogChats(emptyList(), chats),
+                activeCursor = snapshot.active.text("nextCursor").ifEmpty { null },
+                archivedCursor = snapshot.archived.text("nextCursor").ifEmpty { null }, catalogError = null, catalogErrorArchived = null)
+                .resolveInfoNotice(NoticeKey(NoticeKind.Search)).resolveInfoNotice(NoticeKey(NoticeKind.Catalog)) }
+            saveCache()
         }
-        if (mutable.value.catalogRevision != revision) return
-        // Enrich the read-only full catalogue with live status from the shared runtime.
-        val live = rpc.call("thread/list", buildJsonObject { put("limit", 50); put("sortKey", "updated_at"); put("useStateDbOnly", true)
-            put("modelProviders", buildJsonArray {}); put("sourceKinds", JsonArray(sourceKinds.map(::JsonPrimitive))) })
-        val liveById = live.array("data").mapNotNull { r -> (r as? JsonObject)?.let { parseChat(it) } }.associateBy { it.id }
-        mutable.update { it.copy(chats = it.chats.map { c -> liveById[c.id]?.copy(archived = c.archived) ?: c }) }
+    }
+    private suspend fun refreshAll(syncChat: Boolean = true) {
+        // Explicit refreshes invalidate already-queued pagination callbacks.
+        if (syncChat) mutable.update { it.copy(catalogRevision = it.catalogRevision + 1) }
+        val identity = store.sessionIdentity
+        val epoch = lastEpoch
+        val host = rpc.get("/v1/host")
+        if (identity != store.sessionIdentity || epoch != lastEpoch) return
+        mutable.update { it.copy(host = host.text("name", "Your computer"),
+            passwordChangeAvailable = host.obj("capabilities")["passwordChange"]?.jsonPrimitive?.booleanOrNull == true) }
+        refreshLibrary()
         val models = rpc.call("model/list", buildJsonObject {})
+        if (identity != store.sessionIdentity || epoch != lastEpoch) return
         mutable.update { it.copy(models = models.array("data").mapNotNull { r -> r as? JsonObject }.map { m -> ModelChoice(m.text("id"), m.text("displayName").ifEmpty { m.text("id") },
             m.array("supportedReasoningEfforts").mapNotNull { r -> (r as? JsonObject)?.text("reasoningEffort") }, m.text("defaultReasoningEffort")) }) }
-        applySnapshot(rpc.get("/v1/snapshot"))
-        mutable.value.selectedChat?.id?.let { loadThread(it) }
-        saveCache()
-        mutable.update { if (it.catalogRevision != revision) it else it.resolveInfoNotice(NoticeKey(NoticeKind.Catalog)) }
+        val snapshot = rpc.get("/v1/snapshot")
+        if (identity != store.sessionIdentity || epoch != lastEpoch) return
+        applySnapshot(snapshot)
+        if (syncChat) mutable.value.selectedChat?.id?.let { loadThread(it) }
     }
-    private fun applyInventory(raw: JsonObject) {
+    private fun ScreenState.withInventory(raw: JsonObject): ScreenState {
         val assignments = raw.obj("assignments").mapValues { (_, v) -> (v as? JsonPrimitive)?.contentOrNull.orEmpty() }
         val projects = raw.array("projects").mapNotNull { it as? JsonObject }.map { Project(it.text("id"), it.text("name"), it.array("rootPaths").mapNotNull { r -> (r as? JsonPrimitive)?.contentOrNull }) }
-        mutable.update { it.copy(projects = projects, assignments = assignments) }
+        return copy(projects = projects, assignments = assignments)
     }
+    private fun applyInventory(raw: JsonObject) { mutable.update { it.withInventory(raw) } }
     private fun applySnapshot(raw: JsonObject) {
         if (raw.text("epoch") != lastEpoch) return
         mutable.update { reconcilePendingSnapshot(it, raw) }
@@ -513,15 +607,19 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun open(chat: Chat) {
         if (chat.id in deletedChats) return
         olderJob?.cancel()
+        cancelChatSync()
         synchronized(uploadJobs) { uploadJobs.values.forEach { it.cancel() }; uploadJobs.clear() }
         val history = cachedThreads[chat.id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
         val window = historyWindow(history, emptyList())
         mutable.update { it.copy(selectedChat = chat, sentMessageEdit = null, writerConflict = false, notice = null, historyRevision = it.historyRevision + 1, diff = null, timeline = window, hiddenOlderCount = history.size - window.size, olderLoading = false, olderError = null, draft = store.draft(chat.id), attachments = store.attachments(chat.id), uploading = false, chatMode = store.chatMode(chat.id), accessMode = store.accessMode(chat.id), selectedModel = "", selectedEffort = "", uncertainSend = chat.id in uncertainChats, historyAvailable = true, activeTurnId = "", snapshotSequence = 0, itemSequences = emptyMap(), threadSequence = 0, olderCursor = null, lastTurnStatus = "", statusSequence = 0, titleSequence = 0) }
-        if (rpc.status.value == "Connected") action(NoticeKey(NoticeKind.History, chat.id)) { loadThread(chat.id) }
+        requestChatSync()
     }
-    private suspend fun loadThread(id: String) {
-        val revision = mutable.value.historyRevision
+    private suspend fun loadThread(id: String, revision: Long = mutable.value.historyRevision) {
+        val request = threadReads.start(id, store.sessionIdentity, lastEpoch)
         val loaded = readThreadHistory(id, rpc::call)
+        currentCoroutineContext().ensureActive()
+        fun current() = threadReads.isCurrent(request, store.sessionIdentity, lastEpoch)
+        if (!current()) return
         val previous = cachedThreads[id]?.jsonObject
         val mergedThread = if (loaded.olderCursor != null && previous != null) JsonObject(loaded.thread + ("turns" to
             JsonArray((previous.array("turns") + loaded.thread.array("turns")).distinctBy { it.jsonObject.text("id") }.map { turn ->
@@ -534,7 +632,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         }
         val cutoff = loaded.sequence
         mutable.update { current ->
-            if (current.selectedChat?.id != id || current.historyRevision != revision) current else {
+            if (!current() || current.selectedChat?.id != id || current.historyRevision != revision) current else {
                 val newer = current.timeline.filter { (current.itemSequences[it.id] ?: 0) > cutoff }.associateBy { it.id }
                 val fullHistory = if (loaded.authoritative) parseTimeline(raw) else cachedThreads[id]?.let { parseTimeline(it.jsonObject) }.orEmpty()
                 val history = historyWindow(fullHistory, current.timeline)
@@ -548,7 +646,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         saveCache()
-        if (loaded.authoritative) mutable.update { it.resolveInfoNotice(NoticeKey(NoticeKind.History, id)) }
+        mutable.update { if (current()) it.resolveInfoNotice(NoticeKey(NoticeKind.History, id)) else it }
     }
     fun loadOlder() {
         val initial = mutable.value
@@ -1001,7 +1099,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
     private fun applyEvents(events: List<JsonObject>) {
         events.filter { it.text("method") == "thread/deleted" && (it.text("_bridgeEpoch").isEmpty() || it.text("_bridgeEpoch") == lastEpoch) }.forEach { forgetDeletedChat(it.obj("params").text("threadId")) }
-        var completedChat: String? = null
+        val currentEvents = events.filter { it.text("_bridgeEpoch").isEmpty() || it.text("_bridgeEpoch") == lastEpoch }
+        if (currentEvents.any { libraryChanged(it.text("method")) }) libraryEvents.incrementAndGet()
         mutable.update { before ->
             var state = before
             for (event in events) {
@@ -1040,7 +1139,6 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                         selectedChat = state.selectedChat?.let { if (it.id == threadId) it.copy(archived = method == "thread/archived") else it })
                     "turn/started", "turn/completed" -> {
                         state = state.copy(chats = state.chats.map { if (it.id == threadId) it.copy(status = if (method == "turn/started") "active" else "idle") else it })
-                        if (method == "turn/completed") completedChat = threadId
                         if (state.selectedChat?.id == threadId && sequence > state.statusSequence)
                             state = state.copy(selectedChat = state.selectedChat?.copy(status = if (method == "turn/started") "active" else "idle"), statusSequence = sequence)
                     }
@@ -1059,11 +1157,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             }
             state
         }
-        completedChat?.takeIf { it == mutable.value.selectedChat?.id }?.let { id -> action { loadThread(id) } }
+        if (currentEvents.any { it.text("method") == "turn/completed" && it.obj("params").text("threadId") == mutable.value.selectedChat?.id }) requestChatSync()
         events.filter { it.text("method") == "turn/completed" }.forEach { event -> queueAction { messageQueue.pauseForCompletion(event, lastEpoch) } }
-        if (events.any { it.text("method") == "thread/deleted" && it.text("_bridgeEpoch") == lastEpoch } && canRefreshHistory(mutable.value)) refresh()
+        if (currentEvents.any { libraryChanged(it.text("method")) }) requestLibrarySync(false)
         if (events.any { it.text("method").startsWith("thread/") }) refreshFavoriteSummaries()
-        if (events.any { it.text("method") == "project/changed" }) action { delay(100); val inventory = rpc.get("/v1/projects"); cachedInventory = inventory; applyInventory(inventory) }
     }
     private fun refreshFavoriteSummaries() {
         mutable.update { state ->
