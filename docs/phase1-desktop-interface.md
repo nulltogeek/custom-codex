@@ -56,9 +56,9 @@ the old app and install this APK, then sign in again. Removing the app deletes
 its device-local drafts, pins and queued messages; save those first. Server
 chat history remains on the deployment host.
 
-Deploy Android source changes and manual APKs into the existing target project,
-with a backup of overwritten source. Versioned APKs live at
-`artifacts/releases/0.9.0/`. Keep the production 0.7.24 updater manifests intact
-so that incompatible APKs are not offered as automatic upgrades. Local 0.9.0
-update manifests are staged for future migration only. No phase 1 backend
+Android source changes and manual APKs were delivered into the existing target
+project, with a backup of overwritten source. Versioned APKs live at
+`artifacts/releases/0.9.0/`. The initial delivery left the updater advertising
+0.7.24; that publication gap was subsequently fixed by publishing 0.9.1 to
+both live feeds. See [in-app updates](in-app-updates.md). No phase 1 backend
 source change is required.

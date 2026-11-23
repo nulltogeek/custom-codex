@@ -1,12 +1,14 @@
 # In-app APK updates
 
-APK 0.4.0 introduced in-app updates; 0.4.1 extended the download deadline for slow VPN links. Install `artifacts/codex-remote-release.apk` manually once if you have 0.3.0 or earlier. Existing updater users can install **0.7.24 / code 32** from **Settings → App updates**. See [release verification](mobile-0.7.24-verification.md) for the included changes and checks.
+The live release and debug feeds advertise **0.9.1 / code 35**. Open **Settings → App updates → Check for updates**, then **Download** and **Install update**. Version 0.9.1 includes [project-based chat navigation](project-chat-navigation.md). Its signing key matches 0.8.0 and 0.9.0, so those installations can update in place and retain local data.
+
+The older 0.7.24 APK uses a different signing key and cannot update in place to 0.8.0 or later. That installation needs a one-time reinstall; save device-local drafts, pins and queues before removing it. Server chat history stays on the deployment host. The app verifies signing identity before offering installation.
 
 ## On the phone
 
 1. Connect WireGuard and sign in to `https://codex.geeksun.ir` as `nulltogeek`. The app checks for an update when it connects, at most once every six hours during the current app session. You can also tap **Check for updates** in Settings.
 2. Review the version, release notes and download size, then tap **Download**. Keep the app open while downloading. A failed download can be retried; an incomplete file is never offered to the installer.
-3. Tap **Install update** after verification. Android may ask you to allow Codex Remote to install apps; enable that permission and return. Then confirm the update in Android's installer. The APK uses the same application ID and signing key, so a normal update retains your app data.
+3. Tap **Install update** after verification. Android may ask you to allow Codex Remote to install apps; enable that permission and return. Then confirm the update in Android's installer. Updates with the same application ID and signing key retain your app data. Checking alone does not download or install an APK.
 
 The app checks SHA-256, size, package name, version, minimum Android version and the installed signing certificates. It verifies the cached file again before opening the installer. The non-exported FileProvider shares only the update-cache directory through a temporary read grant. Installation stays under Android's normal user confirmation.
 
@@ -14,21 +16,29 @@ Downloads use the existing authenticated HTTPS/WireGuard connection. The current
 
 ## Publish the next release
 
-Increase `versionCode` and `versionName` in `app/build.gradle.kts` using `vim`, retain the signing key, and add `docs/release-notes/<version>.txt`. Then run:
+Increase `versionCode` and `versionName` in `app/build.gradle.kts`, retain the signing key, and add `docs/release-notes/<version>.txt`. Build and stage locally:
 
 ```bash
-CODEX_GOOGLE_CDN=1 ./scripts/build-android.sh
+./scripts/build-local.sh
 ```
 
-The build script runs Android tests/lint, builds debug/release APKs, copies the delivery artifacts and publishes updates when the matching release-notes file exists. If notes are missing it builds the APKs but reports that publishing is still required. An explicit notes file can also be supplied as the build script's first argument.
+The build script runs backend checks, Android tests/lint, builds debug/release APKs, copies delivery artifacts and stages update files locally. It does not publish the live feed. Uploading manual APKs under `artifacts/releases/` also does not change what installed apps discover.
 
-To publish already-built APKs:
+To stage already-built APKs locally, run in Bash:
 
 ```bash
-node scripts/publish-app-update.mjs docs/release-notes/0.7.24.txt
+source scripts/local-env.sh
+node scripts/publish-app-update.mjs docs/release-notes/0.9.1.txt
 ```
 
-Publishing verifies both APK signatures and actual package/version/minimum-SDK metadata using Android build-tools. It writes immutable APKs named by their SHA-256 and replaces each channel's manifest atomically. Future APK publications need no backend restart. The first updater deployment restarts the idle service to add these routes; that restart invalidates existing app login sessions.
+Then publish those staged files to the production updater:
+
+```bash
+./scripts/deploy-app-updates.sh --preview
+./scripts/deploy-app-updates.sh --apply
+```
+
+The deploy helper rechecks signatures, package/version/minimum-SDK metadata and checksums locally, uploads only APKs and updater metadata, and verifies the transferred bytes. It preserves old APKs, backs up manifests and atomically replaces each channel manifest after both APKs are present. A signing-certificate sidecar prevents subsequent publications from silently changing keys; changed or older version numbers are rejected. Publication receipts and prior metadata remain under the target's `artifacts/update-publications/`. No backend restart or login-session reset is required.
 
 Installed apps discover an update only when its `versionCode` is greater than
 their own build number. Rebuilding an APK with the same number does not make it
@@ -46,6 +56,22 @@ node scripts/verify-app-update.mjs https://codex.geeksun.ir --local
 ```
 
 This reads the existing private login locally and downloads both channels, checking authentication, byte counts, SHA-256 and agreement with published metadata. It does not print passwords or sessions.
+
+## Live feed repair on November 23, 2026
+
+Manual 0.9.0/0.9.1 deliveries had left the discovery manifests at 0.7.24/code
+32, so installed 0.9.0 apps correctly found no newer version. Both live
+manifests now advertise 0.9.1/code 35. The new deploy helper passed preview
+and applied the publication with backups; old immutable APKs remain available.
+
+Signature and package/version checks passed locally. The deployed update
+handler served both manifests and complete APK downloads over a temporary
+loopback HTTP listener; sizes and SHA-256 matched the local files. Production
+HTTPS health passed, the protected updater returned 401 without a session,
+and the service PID/start time stayed unchanged. Evidence is retained under
+`artifacts/verification/update-feed-fix/`. No saved plaintext login was
+available for a fresh authenticated production HTTPS test. Physical phone
+download and installation remain unverified.
 
 ## Initial 0.4.0 verification on October 11, 2026
 

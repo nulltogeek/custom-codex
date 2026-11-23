@@ -22,8 +22,8 @@ or deletion permissions.
 Built locally with `scripts/build-local.sh`. APKs and source are delivered to
 `nulltogeek@192.168.1.7` under the existing project's
 `artifacts/releases/0.9.1/`. No backend change or restart is needed. The APK uses
-the 0.8.0/0.9.0 certificate, so it can update 0.9.0 in place. The legacy 0.7.24
-updater feed remains separate because that app uses a different certificate.
+the 0.8.0/0.9.0 certificate, so it can update 0.9.0 in place. Both live updater
+feeds now advertise 0.9.1/code 35; see [in-app updates](in-app-updates.md).
 Physical phone installation is not automated.
 
 Verification logs and fixture screenshots are retained locally under
@@ -41,4 +41,5 @@ Verification logs and fixture screenshots are retained locally under
   and keep disabled-swipe checks away from the system Back gesture edge.
 
 The APK uses the same certificate as 0.9.0; install it over 0.9.0 to retain
-local data. This release does not migrate the legacy automatic-update feed.
+local data. Legacy 0.7.24 installations require a one-time reinstall because
+their signing certificate differs. Physical phone installation remains unverified.

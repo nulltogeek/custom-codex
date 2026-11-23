@@ -57,7 +57,20 @@ backend restart. Keep old content-addressed APK files and publish the channel
 manifests only after uploading and validating the new APKs. Never sync this
 whole checkout or use `--delete` against the remote update directory.
 
-At import time, source is 0.8.0/code 33 but production update manifests are
+After a local build has staged the update files, publish the live feed with:
+
+```bash
+./scripts/deploy-app-updates.sh --preview
+./scripts/deploy-app-updates.sh --apply
+```
+
+This validates APK signatures and metadata locally, checks uploaded bytes,
+backs up the prior manifests, and switches the live feeds without restarting
+the backend. It preserves old APKs and refuses changed or older versions and
+subsequent signing-key changes. The live feeds now advertise 0.9.1/code 35;
+0.9.0 installations can update in place. See [in-app updates](in-app-updates.md).
+
+At import time, source was 0.8.0/code 33 but production update manifests were
 0.7.24/code 32. The 0.8.0 release notes explicitly report a signing-key change
 and say that the prior phone app must be removed first. Verify certificates
 before publishing. Certificate inspection confirmed the published release uses
