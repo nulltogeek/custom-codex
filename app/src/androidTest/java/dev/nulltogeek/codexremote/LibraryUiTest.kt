@@ -159,7 +159,7 @@ class LibraryUiTest {
             RemoteApp(state.copy(signedIn = true, connection = "Connected", motion = false, chats = listOf(chat),
                 projects = listOf(Project("p", "Project", listOf("/workspace")))), vm)
         }
-        compose.onNodeWithTag("nav-archived").assertIsDisplayed().performClick()
+        navigateTo("archived")
         assertArchiveDestination()
         compose.onNodeWithText("Saved conversation").performClick()
         compose.onNodeWithContentDescription("Delete chat").performClick()
@@ -169,7 +169,7 @@ class LibraryUiTest {
         compose.onNodeWithText("Restore chat").performClick()
         compose.onNodeWithText("Restore this chat?").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()
-        compose.onNodeWithContentDescription("Back").performClick()
+        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
         compose.onNodeWithText("Archived chats").assertIsDisplayed()
         assertArchiveDestination()
         compose.onNodeWithText("Saved conversation").performClick()
@@ -180,28 +180,60 @@ class LibraryUiTest {
         compose.runOnIdle { assertNull(vm.state.value.projectFilter) }
     }
 
-    private fun assertArchiveDestination() {
-        compose.onNodeWithTag("nav-archived").assertIsSelected()
+    private fun openNavigation() {
+        compose.onNodeWithTag("open-navigation").performClick()
+        compose.onNodeWithTag("navigation-drawer").assertIsDisplayed()
     }
 
-    @Test fun bottomNavigationSelectsEachPageAndHidesWhileReadingAChat() {
+    private fun navigateTo(page: String) {
+        openNavigation()
+        compose.onNodeWithTag("nav-$page").performScrollTo().performClick()
+        compose.onNodeWithTag("navigation-drawer").assertIsNotDisplayed()
+    }
+
+    private fun assertArchiveDestination() {
+        openNavigation()
+        compose.onNodeWithTag("nav-archived").assertIsSelected()
+        compose.onNodeWithContentDescription("Close navigation").performClick()
+    }
+
+    @Test fun drawerNavigationSelectsEachPageAndKeepsConversationAccessible() {
         val vm = RemoteViewModel(compose.activity.application)
         val chat = Chat("navigation-chat", "Navigation conversation", "", "/workspace")
         render {
             val state by vm.state.collectAsState()
             RemoteApp(state.copy(signedIn = true, connection = "Connected", motion = false, chats = listOf(chat)), vm)
         }
+        openNavigation()
         compose.onNodeWithTag("nav-chats").assertIsSelected()
-        compose.onNodeWithTag("nav-archived").performClick().assertIsSelected()
-        compose.onNodeWithTag("nav-projects").performClick()
-        compose.onNodeWithTag("nav-projects").assertIsSelected()
+        compose.onNodeWithTag("drawer-chat:navigation-chat").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Close navigation").performClick()
+        navigateTo("archived")
+        navigateTo("projects")
         compose.runOnIdle { assertEquals("projects", vm.state.value.page) }
-        compose.onNodeWithTag("nav-settings").performClick().assertIsSelected()
-        compose.onNodeWithTag("nav-chats").performClick()
+        navigateTo("settings")
+        navigateTo("chats")
         compose.onNodeWithText("Navigation conversation").performClick()
-        for (page in listOf("chats", "archived", "projects", "settings")) compose.onNodeWithTag("nav-$page").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Back").performClick()
-        compose.onNodeWithTag("nav-chats").assertIsDisplayed().assertIsSelected()
+        compose.onNodeWithTag("navigation-drawer").assertIsNotDisplayed()
+        openNavigation()
+        compose.onNodeWithTag("drawer-chat:navigation-chat").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Close navigation").performClick()
+        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        openNavigation()
+        compose.onNodeWithTag("nav-chats").assertIsSelected()
+    }
+
+    @Test fun userManagementNavigationIsVisibleOnlyForAdministrators() {
+        val admin = mutableStateOf(false)
+        val vm = RemoteViewModel(compose.activity.application)
+        render {
+            RemoteApp(ScreenState(signedIn = true, username = "fixture", connection = "Connected", motion = false,
+                userManagementAvailable = admin.value), vm)
+        }
+        openNavigation()
+        compose.onNodeWithTag("nav-users").assertDoesNotExist()
+        compose.runOnIdle { admin.value = true }
+        compose.onNodeWithTag("nav-users").performScrollTo().assertIsDisplayed()
     }
 
     @Test fun projectFavoritesFilterAndToggleAt320Dp() {

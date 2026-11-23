@@ -91,20 +91,28 @@ export function readHistory(codexHome, archived = false, cursor = null, searchTe
 export function createHost({ broker, token, authentication, port = 8787, bindAddress = '127.0.0.1', codexHome = process.env.CODEX_HOME ?? join(homedir(), '.codex'),
   backendPid, backendVersion = '0.159.2', runtimeMode = 'desktop', liveProjects = () => [],
   uploadDirectory = process.env.CODEX_UPLOAD_DIRECTORY ?? join(homedir(), '.local/share/custom-codex/uploads'),
-  updateDirectory = process.env.CODEX_APP_UPDATE_DIRECTORY ?? defaultUpdateDirectory }) {
+  updateDirectory = process.env.CODEX_APP_UPDATE_DIRECTORY ?? defaultUpdateDirectory, resolveRuntime }) {
   if (!authentication && !token) throw Error('Host authentication is required');
   const digest = v => createHash('sha256').update(v).digest(); const expected = digest(`Bearer ${token}`);
   const authorized = req => authentication ? Boolean(authentication.authenticate(req)) :
     !req.headers.origin && timingSafeEqual(expected, digest(req.headers.authorization ?? ''));
-  const server = createServer((req, res) => {
+  const defaults = { broker, codexHome, backendPid, backendVersion, runtimeMode, liveProjects, uploadDirectory };
+  const uploadsInFlight = new Map(); let totalUploads = 0;
+  const server = createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
     const reply = (status, body) => { res.writeHead(status); res.end(JSON.stringify(body)); };
     if (req.url === '/healthz' && req.method === 'GET' && !req.headers.origin) return reply(200, { ok: true });
     const passwordChange = req.url === '/v1/password';
-    if ((req.url === '/v1/login' || passwordChange) && authentication) {
+    const signup = req.url === '/v1/signup';
+    const adminRoute = req.url?.startsWith('/v1/admin/');
+    if ((req.url === '/v1/login' || passwordChange || signup || adminRoute) && authentication) {
       if (req.headers.origin) return reply(401, { error: 'Authentication required' });
-      if (passwordChange && !authorized(req)) return reply(401, { error: 'Authentication required' });
-      if (req.method !== 'POST') return reply(405, { error: 'Method not allowed' });
+      if ((passwordChange || adminRoute) && !authorized(req)) return reply(401, { error: 'Authentication required' });
+      if (adminRoute && req.method === 'GET' && req.url === '/v1/admin/users') {
+        try { return reply(200, authentication.listUsers?.(req) ?? { users: [], signupEnabled: false }); }
+        catch (error) { return reply(error.status ?? 503, { error: error.status ? error.message : 'Account service temporarily unavailable' }); }
+      }
+      if (!(req.method === 'POST' || (adminRoute && req.method === 'PATCH'))) return reply(405, { error: 'Method not allowed' });
       if ((req.headers['content-type'] ?? '').split(';')[0].trim() !== 'application/json') return reply(415, { error: 'Use application/json' });
       let size = 0, chunks = [];
       req.setTimeout(15000, () => req.destroy());
@@ -119,7 +127,21 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
           let input;
           try { input = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
           catch { return reply(400, { error: 'Invalid account request' }); }
-          reply(200, passwordChange ? await authentication.changePassword(req, input, req.socket.remoteAddress) : await authentication.login(input, req.socket.remoteAddress));
+          let result;
+          if (passwordChange) result = await authentication.changePassword(req, input, req.socket.remoteAddress);
+          else if (signup) {
+            if (!authentication.signup) return reply(404, { error: 'Signup is unavailable on this host' });
+            result = await authentication.signup(input, req.socket.remoteAddress);
+          } else if (adminRoute) {
+            if (!authentication.listUsers) return reply(404, { error: 'User management is unavailable on this host' });
+            const match = /^\/v1\/admin\/users\/([A-Za-z0-9-]+)(\/revoke)?$/.exec(req.url);
+            if (req.url === '/v1/admin/users' && req.method === 'POST') result = await authentication.createUser(req, input, req.socket.remoteAddress);
+            else if (req.url === '/v1/admin/settings' && req.method === 'PATCH') result = authentication.updateSettings(req, input);
+            else if (match?.[2] && req.method === 'POST') result = authentication.revokeSessions(req, match[1]);
+            else if (match && !match[2] && req.method === 'PATCH') result = await authentication.updateUser(req, match[1], input);
+            else return reply(404, { error: 'Not found' });
+          } else result = await authentication.login(input, req.socket.remoteAddress);
+          reply(200, result);
         } catch (error) {
           const status = error.status ?? 503;
           if (status === 429) res.setHeader('Retry-After', '600');
@@ -130,7 +152,22 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
       return;
     }
     if (!authorized(req)) return reply(401, { error: 'Authentication required' });
-    if (req.url === '/v1/attachments' && req.method === 'POST') return receiveUpload(req, res, uploadDirectory, reply);
+    if (req.url === '/v1/logout' && authentication && req.method === 'POST') { authentication.logout(req); return reply(200, { ok: true }); }
+    let context;
+    const session = authentication?.authenticate(req);
+    try { context = resolveRuntime ? await resolveRuntime(session) : defaults; }
+    catch (error) { return reply(error.status ?? 503, { error: error.status ? error.message : 'Your private workspace is unavailable. Contact the administrator.' }); }
+    if (!authorized(req)) return reply(401, { error: 'Authentication required' });
+    const { broker, codexHome, backendPid, backendVersion, runtimeMode, liveProjects = () => [], uploadDirectory } = context;
+    if (req.url === '/v1/attachments' && req.method === 'POST') {
+      const key = session?.userId ?? 'owner', own = uploadsInFlight.get(key) ?? 0;
+      if (own >= 2 || totalUploads >= 8) { req.resume(); return reply(429, { error: 'Too many uploads. Wait for current uploads to finish.' }); }
+      totalUploads++; uploadsInFlight.set(key, own + 1);
+      let released = false;
+      const release = () => { if (released) return; released = true; totalUploads--; const count = uploadsInFlight.get(key) - 1; if (count) uploadsInFlight.set(key, count); else uploadsInFlight.delete(key); };
+      res.once('finish', release); res.once('close', release); req.once('error', release);
+      return receiveUpload(req, res, uploadDirectory, reply);
+    }
     if (req.url === '/v1/logout' && authentication && req.method === 'POST') {
       authentication.logout(req); return reply(200, { ok: true });
     }
@@ -139,23 +176,31 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
     if (url.pathname === '/v1/attachments/image') return serveUploadImage(url, res, uploadDirectory, reply);
     if (url.pathname === '/v1/app-update' || url.pathname.startsWith('/v1/app-update/')) return serveAppUpdate(url, res, updateDirectory, reply);
     if (url.pathname === '/v1/history') {
-      try { return reply(200, readHistory(codexHome, url.searchParams.get('archived') === 'true', url.searchParams.get('cursor'), url.searchParams.get('searchTerm') ?? '')); }
+      try { return reply(200, context.readHistory ? await context.readHistory(url.searchParams.get('archived') === 'true', url.searchParams.get('cursor'), url.searchParams.get('searchTerm') ?? '') : readHistory(codexHome, url.searchParams.get('archived') === 'true', url.searchParams.get('cursor'), url.searchParams.get('searchTerm') ?? '')); }
       catch { return reply(503, { error: 'Local history catalogue unavailable for this backend version' }); }
     }
     if (req.url === '/v1/host') return reply(200, { name: hostname(), backendPid, backendVersion,
-      bridgeVersion: '1', runtimeMode, codexHome, configFile: join(codexHome, 'config.toml'), ready: broker.ready, epoch: broker.epoch,
-      capabilities: { passwordChange: Boolean(authentication?.canChangePassword), attachments: true, appUpdates: true, maxUploadBytes: 20 * 1024 * 1024, mobileModes: ['codex', 'chat'], accessModes: ['host', 'ask', 'read-only', 'full'] },
+      user: session?.user, bridgeVersion: '2', runtimeMode, codexHome, configFile: join(codexHome, 'config.toml'), ready: broker.ready, epoch: broker.epoch,
+      capabilities: { userManagement: session?.user?.role === 'admin', registration: Boolean(authentication?.signupEnabled), workspaceRoot: context.workspaceRoot ?? null, passwordChange: Boolean(authentication?.canChangePassword), attachments: true, appUpdates: true, maxUploadBytes: 20 * 1024 * 1024, mobileModes: ['codex', 'chat'], accessModes: context.workspaceRoot ? ['host', 'ask', 'read-only'] : ['host', 'ask', 'read-only', 'full'] },
       initialization: { resultReceived: Boolean(broker.initResult), notificationReceived: broker.desktopNotificationSeen, errorCode: broker.initializationError } });
-    if (req.url === '/v1/projects') return reply(200, readProjects(codexHome, liveProjects()));
+    if (req.url === '/v1/projects') {
+      try { return reply(200, context.readProjects ? await context.readProjects() : readProjects(codexHome, liveProjects())); }
+      catch { return reply(503, { error: 'Your project catalogue is temporarily unavailable' }); }
+    }
     if (req.url === '/v1/snapshot') return reply(200, broker.snapshot());
     reply(404, { error: 'Not found' });
   });
   const ws = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 }); let serial = 0;
-  server.on('upgrade', (req, socket, head) => {
+  server.on('upgrade', async (req, socket, head) => {
     if (req.url !== '/v1/rpc' || !authorized(req)) { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return; }
-    ws.handleUpgrade(req, socket, head, peer => ws.emit('connection', peer, req));
+    try {
+      const context = resolveRuntime ? await resolveRuntime(authentication.authenticate(req)) : defaults;
+      if (!authorized(req)) { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return; }
+      ws.handleUpgrade(req, socket, head, peer => ws.emit('connection', peer, req, context));
+    } catch { socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n'); }
   });
-  ws.on('connection', (peer, req) => {
+  ws.on('connection', (peer, req, context) => {
+    const broker = context.broker;
     const id = `phone:${++serial}`;
     const send = message => {
       if (peer.bufferedAmount > 4 * 1024 * 1024) { peer.close(1013, 'Slow client: reconnect and refresh'); return; }

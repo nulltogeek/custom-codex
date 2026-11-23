@@ -1,0 +1,8 @@
+Create your own account with a username and password.
+Each user has separate chats, projects, history, uploads, and a private coding workspace.
+The nulltogeek administrator can manage users and open or close registration.
+New neutral light/dark design with a navigation drawer, simpler message layout, and rounded composer, inspired by ChatGPT Android.
+Existing coding controls, approvals, questions, attachments, queues, archives, and changes remain available.
+Requires the updated standalone bridge and Docker for non-admin workspaces.
+Non-admin coding workspaces have no general network access; model requests use a private relay.
+This build uses a new signing key and requires removing the previous app before installing. Server-side chats and projects are retained.

@@ -16,6 +16,10 @@ import kotlinx.serialization.json.*
 class RemoteViewModel(application: Application) : AndroidViewModel(application) {
     private val store = LocalStore(application)
     private val rpc = RpcClient()
+    private var accountJob: Job = SupervisorJob(viewModelScope.coroutineContext[Job])
+    private val accountScope get() = CoroutineScope(viewModelScope.coroutineContext + accountJob)
+    private val authenticationMutex = kotlinx.coroutines.sync.Mutex()
+    private val accountStateLock = Any()
     private val mutable = MutableStateFlow(ScreenState(endpoint = store.endpoint, username = store.username, theme = store.theme, accent = store.accent, motion = store.motion, loadCommandOutput = store.loadCommandOutput))
     val state: StateFlow<ScreenState> = mutable.asStateFlow()
     private var reconnect: Job? = null
@@ -37,13 +41,15 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var lastUpdateCheck = 0L
     @Volatile private var foreground = false
     @Volatile private var lastEpoch = ""
+    private var cachedAccountKey = store.accountKey
     private var cachedThreads = buildJsonObject {}
     private var cachedList = JsonArray(emptyList())
     private var cachedInventory = buildJsonObject {}
     private val deletedChats = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val uncertainChats = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val sourceKinds = listOf("cli", "vscode", "exec", "appServer", "subAgent", "subAgentReview", "subAgentCompact", "subAgentThreadSpawn", "subAgentOther", "unknown")
-    private val librarySync: AutomaticSync = AutomaticSync(viewModelScope + Dispatchers.IO) {
+    private var librarySync = createLibrarySync()
+    private fun createLibrarySync(): AutomaticSync = AutomaticSync(accountScope + Dispatchers.IO) {
         if (foreground && needsLibrarySync(mutable.value)) {
             val identity = store.sessionIdentity
             try {
@@ -56,7 +62,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                     else {
                         mutable.update { it.withInfoNotice(NoticeKey(NoticeKind.Catalog), "Could not update chats and projects. Retrying automatically.") }
                         libraryRetryJob?.cancel()
-                        libraryRetryJob = viewModelScope.launch(Dispatchers.IO) {
+                        libraryRetryJob = accountScope.launch(Dispatchers.IO) {
                             delay(3000)
                             if (identity == store.sessionIdentity && foreground && needsLibrarySync(mutable.value)) librarySync.request()
                         }
@@ -68,27 +74,36 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            val cache = store.cache(); cachedThreads = cache.obj("threads"); cachedList = cache.array("chats"); cachedInventory = cache.obj("inventory")
-            val token = store.session()
-            mutable.update { it.copy(signedIn = token.isNotEmpty(), chats = cachedList.mapNotNull { r -> (r as? JsonObject)?.let { o -> parseChat(o, o.text("cachedArchived") == "true") } }) }
-            applyInventory(cachedInventory)
-            loadFavorites()
-            if (mutable.value.signedIn) loadQueue()
+            authenticationMutex.withLock {
+                val token = store.session()
+                if (token.isNotEmpty()) {
+                    loadAccountCache()
+                    mutable.update { it.copy(signedIn = true) }
+                    loadFavorites(); loadQueue()
+                }
+            }
             if (foreground) withContext(Dispatchers.Main) { syncTaskNotifications() }
             connectIfForeground()
         }
         viewModelScope.launch {
-            rpc.status.collect { status -> mutable.update { it.withConnectionStatus(status) } }
+            rpc.status.collect { mutable.update { it.withConnectionStatus(rpc.status.value) } }
         }
         viewModelScope.launch {
-            messageQueue.state.collect { queue -> mutable.update { it.copy(queuedMessages = queue.messages, pausedQueues = queue.pausedChats).resolveQueueNotices(queue) } }
+            messageQueue.state.collect {
+                mutable.update { current ->
+                    // Re-read on each CAS attempt. A queued notification from detach()
+                    // cannot overwrite a queue restored for the next account.
+                    val queue = messageQueue.state.value
+                    current.copy(queuedMessages = queue.messages, pausedQueues = queue.pausedChats).resolveQueueNotices(queue)
+                }
+            }
         }
         viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 delay(1500)
-                try { dispatchQueuedMessages() }
+                try { accountScope.async(Dispatchers.IO) { dispatchQueuedMessages() }.await() }
                 catch (e: Exception) {
-                    if (e is CancellationException) throw e
+                    if (e is CancellationException) { currentCoroutineContext().ensureActive(); continue }
                     queueStorageBlocked = true
                     mutable.update { it.copy(queueBlocked = true).withInfoNotice(NoticeKey(NoticeKind.QueueStorage), "Queue paused: ${e.message}. Tap Resume queue after fixing the problem.") }
                 }
@@ -97,10 +112,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         // Actor processes notifications off the main thread in short batches.
         viewModelScope.launch(Dispatchers.Default) {
             while (isActive) {
-                val first = rpc.events.receive(); val batch = mutableListOf(first)
+                val first = rpc.events.receive(); val identity = store.sessionIdentity; val batch = mutableListOf(first)
                 delay(50)
                 repeat(1023) { rpc.events.tryReceive().getOrNull()?.let(batch::add) }
-                applyEvents(batch)
+                if (identity.isNotEmpty() && identity == store.sessionIdentity) applyEvents(batch)
             }
         }
     }
@@ -109,9 +124,9 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         syncTaskNotifications()
         connectIfForeground()
     }
-    private fun connectIfForeground() = viewModelScope.launch(Dispatchers.Main.immediate) {
+    private fun connectIfForeground() = accountScope.launch(Dispatchers.Main.immediate) {
         if (!foreground || !mutable.value.signedIn || reconnect?.isActive == true) return@launch
-        reconnect = viewModelScope.launch(Dispatchers.IO) {
+        reconnect = accountScope.launch(Dispatchers.IO) {
             val backoff = ReconnectBackoff()
             while (foreground && isActive && mutable.value.signedIn) {
                 try {
@@ -144,34 +159,158 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         reconnect?.cancel(); reconnect = null; cancelChatSync(); libraryRetryJob?.cancel(); rpc.close()
         mutable.update { it.copy(chatSyncing = false) }
     }
-    fun signIn(endpoint: String, username: String, password: String) = action {
-        val cleaned = endpoint.trim().trimEnd('/')
-        val session = rpc.login(cleaned, username.trim(), password)
-        // Verify the session before saving it; the password is never persisted.
-        val host = rpc.get("/v1/host")
-        store.signIn(cleaned, session)
-        mutable.update { it.copy(endpoint = cleaned, username = session.username, signedIn = true, host = host.text("name"),
-            passwordChangeAvailable = host.obj("capabilities")["passwordChange"]?.jsonPrimitive?.booleanOrNull == true, notice = null) }
-        loadFavorites()
-        loadQueue()
-        syncTaskNotifications()
-        connectIfForeground()
+    fun signIn(endpoint: String, username: String, password: String) = authenticate(endpoint, username, password, signup = false)
+    fun signUp(endpoint: String, username: String, password: String) = authenticate(endpoint, username, password, signup = true)
+    private fun authenticate(endpoint: String, username: String, password: String, signup: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        authenticationMutex.withLock {
+            mutable.update { it.copy(loading = true, notice = null) }
+            try {
+                disconnect()
+                stopAccountWork()
+                val cleaned = endpoint.trim().trimEnd('/')
+                val session = if (signup) rpc.signup(cleaned, username.trim(), password) else rpc.login(cleaned, username.trim(), password)
+                // The session is verified before saving it. Passwords are never persisted.
+                val host = rpc.get("/v1/host")
+                synchronized(accountStateLock) {
+                    resetAccountMemory()
+                    store.signIn(cleaned, session)
+                    mutable.update { ScreenState(endpoint = cleaned, username = session.username, signedIn = true,
+                        theme = it.theme, accent = it.accent, motion = it.motion, loadCommandOutput = it.loadCommandOutput).withHostAccount(host) }
+                    loadAccountCache()
+                }
+                loadFavorites(); loadQueue()
+                syncTaskNotifications()
+                connectIfForeground()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                mutable.update { it.copy(loading = false, notice = e.message ?: "Could not sign in") }
+            } finally { mutable.update { it.copy(loading = false) } }
+        }
     }
-    private fun clearSession(notice: String? = null) {
-        updateJob?.cancel(); olderJob?.cancel()
-        synchronized(uploadJobs) { uploadJobs.values.forEach { it.cancel() }; uploadJobs.clear() }
-        TaskNotificationService.stop(getApplication())
-        liveHistory.clear()
-        messageQueue.detach(); rpc.close(); store.signOut()
-        mutable.update { ScreenState(endpoint = store.endpoint, username = store.username, theme = it.theme, accent = it.accent, motion = it.motion, loadCommandOutput = it.loadCommandOutput, notice = notice) }
+    private fun loadAccountCache() {
+        cachedAccountKey = store.accountKey
+        val cache = store.cache(cachedAccountKey)
+        cachedThreads = cache.obj("threads"); cachedList = cache.array("chats"); cachedInventory = cache.obj("inventory")
+        mutable.update { it.withInventory(cachedInventory).copy(chats = cachedList.mapNotNull { raw ->
+            (raw as? JsonObject)?.let { parseChat(it, it.text("cachedArchived") == "true") }
+        }) }
     }
-    fun signOut() = action {
+    /** Cancel and drain account work before switching the storage and transport identity. */
+    private suspend fun stopAccountWork() {
+        accountJob.cancelAndJoin()
+        accountJob = SupervisorJob(viewModelScope.coroutineContext[Job])
+        librarySync = createLibrarySync()
+        searchJob = null; updateJob = null; olderJob = null; reconnect = null; libraryRetryJob = null
+        synchronized(uploadJobs) { uploadJobs.clear() }
+        synchronized(accountStateLock) { resetAccountMemory() }
+    }
+    private fun resetAccountMemory() {
+        liveHistory.clear(); messageQueue.detach()
+        cachedThreads = buildJsonObject {}; cachedList = JsonArray(emptyList()); cachedInventory = buildJsonObject {}
+        deletedChats.clear(); uncertainChats.clear(); queueStorageBlocked = false; lastEpoch = ""; lastUpdateCheck = 0
+        while (rpc.events.tryReceive().isSuccess) { }
+    }
+    private fun clearSession(notice: String? = null): Job {
+        val expectedIdentity = store.sessionIdentity
+        // Run outside accountJob: an expired request must never cancel and join itself.
+        return viewModelScope.launch(Dispatchers.IO) {
+            authenticationMutex.withLock {
+                if (expectedIdentity == store.sessionIdentity) clearSessionLocked(notice)
+            }
+        }
+    }
+    private suspend fun clearSessionLocked(notice: String?) = withContext(NonCancellable) {
         disconnect()
-        var notice: String? = null
-        try { rpc.configure(store.endpoint, store.session()); rpc.logout() }
-        catch (e: Exception) { if (e is CancellationException) throw e; notice = "Signed out on this phone. Server session could not be revoked while offline." }
-        finally { clearSession(notice) }
+        TaskNotificationService.stop(getApplication())
+        stopAccountWork()
+        rpc.close()
+        synchronized(accountStateLock) {
+            resetAccountMemory(); store.signOut()
+            mutable.update { ScreenState(endpoint = store.endpoint, username = store.username, theme = it.theme, accent = it.accent, motion = it.motion, loadCommandOutput = it.loadCommandOutput, notice = notice) }
+        }
     }
+    fun signOut() = viewModelScope.launch(Dispatchers.IO) {
+        authenticationMutex.withLock {
+            disconnect()
+            mutable.update { it.copy(loading = true) }
+            var notice: String? = null
+            try { rpc.configure(store.endpoint, store.session()); rpc.logout() }
+            catch (e: Exception) { if (e is CancellationException) throw e; notice = "Signed out on this phone. Server session could not be revoked while offline." }
+            finally { clearSessionLocked(notice) }
+        }
+    }
+    private fun ScreenState.withHostAccount(host: JsonObject): ScreenState = copy(
+        host = host.text("name", "Your computer"), accountId = host.obj("user").text("id"),
+        accountRole = host.obj("user").text("role", "user"),
+        userManagementAvailable = host.obj("capabilities")["userManagement"]?.jsonPrimitive?.booleanOrNull == true,
+        registrationAvailable = host.obj("capabilities")["registration"]?.jsonPrimitive?.booleanOrNull != false,
+        availableAccessModes = host.obj("capabilities").array("accessModes").mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            .ifEmpty { listOf("host", "ask", "read-only", "full") },
+        workspaceRoot = host.obj("capabilities").text("workspaceRoot"),
+        passwordChangeAvailable = host.obj("capabilities")["passwordChange"]?.jsonPrimitive?.booleanOrNull == true)
+
+    fun refreshUsers() {
+        if (!mutable.value.userManagementAvailable || mutable.value.usersLoading) return
+        val identity = store.sessionIdentity
+        mutable.update { it.copy(usersLoading = true, userManagementMessage = "") }
+        accountScope.launch(Dispatchers.IO) {
+            try { readManagedUsers(identity) }
+            catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (identity == store.sessionIdentity) {
+                    if (e is SessionExpiredException) clearSession(e.message)
+                    else mutable.update { it.copy(userManagementMessage = e.message ?: "Could not load users") }
+                }
+            } finally { if (identity == store.sessionIdentity) mutable.update { it.copy(usersLoading = false) } }
+        }
+    }
+    private suspend fun readManagedUsers(identity: String) {
+        val result = rpc.accountRequest("/v1/admin/users", "GET")
+        if (identity != store.sessionIdentity) return
+        mutable.update { it.copy(adminUsers = result.array("users").mapNotNull { raw -> (raw as? JsonObject)?.let(::parseManagedUser) },
+            signupEnabled = result["signupEnabled"]?.jsonPrimitive?.booleanOrNull == true) }
+    }
+    fun createUser(username: String, password: String) = manageUsers("User created.") {
+        require(validSignup(username, password, password)) { "Use a valid username and a password of at least 12 characters." }
+        rpc.accountRequest("/v1/admin/users", "POST", jsonObject("username" to username.trim(), "password" to password))
+    }
+    fun updateUser(user: ManagedUser, disabled: Boolean? = null, password: String? = null) = manageUsers(
+        if (password != null) "Password reset. Previous sessions were signed out." else if (disabled == true) "User disabled and signed out." else "User enabled.") {
+        require(user.id.isNotBlank()) { "Refresh the user list before trying again." }
+        require(disabled != true || user.id != mutable.value.accountId) { "You cannot disable your own administrator account." }
+        password?.let { require(validSignup(user.username, it, it)) { "Use a password of at least 12 characters and at most 1024 bytes." } }
+        rpc.accountRequest("/v1/admin/users/${user.id}", "PATCH", buildJsonObject {
+            disabled?.let { put("disabled", it) }; password?.let { put("password", it) }
+        })
+    }
+    fun revokeUserSessions(user: ManagedUser) = manageUsers("User sessions signed out.") {
+        require(user.id != mutable.value.accountId) { "Use Sign out to end your own session." }
+        rpc.accountRequest("/v1/admin/users/${user.id}/revoke", "POST")
+    }
+    fun setSignupEnabled(enabled: Boolean) = manageUsers(if (enabled) "New registrations are open." else "New registrations are closed.") {
+        rpc.accountRequest("/v1/admin/settings", "PATCH", buildJsonObject { put("signupEnabled", enabled) })
+    }
+    private fun manageUsers(success: String, request: suspend () -> JsonObject) {
+        val state = mutable.value
+        if (!state.userManagementAvailable || state.userMutationPending) return
+        val identity = store.sessionIdentity
+        mutable.update { it.copy(userMutationPending = true, userManagementMessage = "") }
+        accountScope.launch(Dispatchers.IO) {
+            try {
+                request()
+                if (identity != store.sessionIdentity) return@launch
+                readManagedUsers(identity)
+                mutable.update { it.copy(userManagementMessage = success) }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (identity == store.sessionIdentity) {
+                    if (e is SessionExpiredException) clearSession(e.message)
+                    else mutable.update { it.copy(userManagementMessage = e.message ?: "Could not update users") }
+                }
+            } finally { if (identity == store.sessionIdentity) mutable.update { it.copy(userMutationPending = false) } }
+        }
+    }
+
     fun notificationMessage(message: String) { mutable.update { it.copy(notificationMessage = message) } }
     fun taskNotifications(enabled: Boolean) {
         store.taskNotifications(enabled)
@@ -206,7 +345,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun loadCommandOutput(enabled: Boolean) {
         if (mutable.value.commandOutputChanging) return
         mutable.update { it.copy(commandOutputChanging = true, commandOutputMessage = "") }
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             try {
                 commandOutputMutex.withLock {
                     store.loadCommandOutput(enabled)
@@ -245,7 +384,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val initial = mutable.value
         if (!initial.signedIn || initial.connection != "Connected" || initial.passwordChanging) return
         mutable.update { it.copy(passwordChanging = true, passwordChanged = false, passwordMessage = "") }
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             try {
                 rpc.changePassword(currentPassword, newPassword)
                 mutable.update { it.copy(passwordChanged = true, passwordMessage = "Password changed. Other sessions have been signed out.") }
@@ -264,7 +403,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         lastUpdateCheck = System.currentTimeMillis()
         val session = store.session()
         mutable.update { it.copy(updateChecking = true, updateMessage = if (automatic) it.updateMessage else "Checking for updates…") }
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             try {
                 val update = parseAppUpdate(rpc.get("/v1/app-update?channel=$appUpdateChannel"), BuildConfig.APPLICATION_ID, android.os.Build.VERSION.SDK_INT)
                 val available = update.takeIf { it.versionCode > BuildConfig.VERSION_CODE }
@@ -291,7 +430,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         if (initial.updateDownloading || initial.updateChecking || update.versionCode <= BuildConfig.VERSION_CODE || !initial.signedIn) return
         val session = store.session()
         mutable.update { it.copy(updateDownloading = true, updateProgress = 0, updateApk = null, updateMessage = "Downloading update…") }
-        updateJob = viewModelScope.launch(Dispatchers.IO) {
+        updateJob = accountScope.launch(Dispatchers.IO) {
             try {
                 val file = rpc.downloadAppUpdate(update, java.io.File(getApplication<Application>().cacheDir, "apk-updates")) { percent ->
                     if (store.session() == session) mutable.update { it.copy(updateProgress = percent) }
@@ -312,7 +451,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         mutable.update { it.copy(chatMode = value) }; saveChatOptions()
     }
     fun accessMode(value: String) {
-        if (mutable.value.selectedChat?.status == "active" || value !in listOf("host", "ask", "read-only", "full")) return
+        if (mutable.value.selectedChat?.status == "active" || value !in mutable.value.availableAccessModes) return
         mutable.update { it.copy(accessMode = value) }; saveChatOptions()
     }
     private fun saveChatOptions() { val state = mutable.value; store.chatOptions(state.selectedChat?.id ?: "new", state.chatMode, state.accessMode) }
@@ -344,7 +483,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         cancelChatSync()
         val generation = chatSyncGeneration.get()
         mutable.update { it.copy(chatSyncing = true) }
-        chatSyncJob = viewModelScope.launch(Dispatchers.IO) {
+        chatSyncJob = accountScope.launch(Dispatchers.IO) {
             var retry = 1000L
             try {
                 while (isActive && foreground && identity == store.sessionIdentity && mutable.value.selectedChat?.id == id &&
@@ -366,7 +505,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         mutable.update { it.copy(searchTerm = value, catalogRevision = it.catalogRevision + 1, catalogError = null, catalogErrorArchived = null, activeCursor = null, archivedCursor = null) }; searchJob?.cancel()
         val revision = mutable.value.catalogRevision
         if (rpc.status.value != "Connected") return
-        searchJob = viewModelScope.launch(Dispatchers.IO) {
+        searchJob = accountScope.launch(Dispatchers.IO) {
             delay(300)
             try {
                 catalogMutex.withLock {
@@ -398,7 +537,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         if (!canMoveChat(initial) || projectId == chat.projectId) return
         if (initial.projects.none { it.id == projectId }) { mutable.update { it.copy(moveChatError = "Choose an available project.") }; return }
         if (!mutable.compareAndSet(initial, initial.copy(movingChat = true, moveChatError = null))) return
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             var accepted = false
             try {
                 val result = rpc.call("thread/metadata/update", chatMoveParams(chat.id, projectId))
@@ -435,7 +574,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         if (!canCreateProject(initial)) return
         val request = initial.projectCreateRequest ?: ProjectCreateRequest(name.trim(), projectFolders(folders))
         if (!mutable.compareAndSet(initial, initial.copy(creatingProject = true, projectCreateRequest = request, projectCreateError = null))) return
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             var accepted = false
             try {
                 val result = rpc.call("project/create", projectCreateParams(key, request))
@@ -475,7 +614,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         if (validation != null) { mutable.update { it.copy(renameError = validation) }; return }
         if (!canRename(initial) || name.trim() == target.name) return
         if (!mutable.compareAndSet(initial, initial.copy(renaming = true, renameError = null))) return
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             var accepted = false
             try {
                 val result = rpc.call(if (target.kind == RenameKind.Chat) "thread/name/set" else "project/update",
@@ -562,8 +701,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val epoch = lastEpoch
         val host = rpc.get("/v1/host")
         if (identity != store.sessionIdentity || epoch != lastEpoch) return
-        mutable.update { it.copy(host = host.text("name", "Your computer"),
-            passwordChangeAvailable = host.obj("capabilities")["passwordChange"]?.jsonPrimitive?.booleanOrNull == true) }
+        mutable.update { it.withHostAccount(host) }
         refreshLibrary()
         val models = rpc.call("model/list", buildJsonObject {})
         if (identity != store.sessionIdentity || epoch != lastEpoch) return
@@ -587,7 +725,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun listPage(archived: Boolean, cursor: String?, query: String = mutable.value.searchTerm): JsonObject = rpc.get("/v1/history?archived=$archived" + (cursor?.let { "&cursor=${java.net.URLEncoder.encode(it, "UTF-8")}" } ?: "") + "&searchTerm=" + java.net.URLEncoder.encode(query, "UTF-8"))
     fun loadMore(archived: Boolean): Job {
         val request = catalogPageRequest(mutable.value, archived)
-        return viewModelScope.launch(Dispatchers.IO) {
+        return accountScope.launch(Dispatchers.IO) {
             if (request == null) return@launch
             catalogMutex.withLock {
                 // Queued callbacks for the same page or an earlier search become no-ops.
@@ -670,7 +808,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         if (initial.olderLoading || olderJob?.isActive == true || (initial.hiddenOlderCount == 0 && initial.connection != "Connected")) return
         if (initial.hiddenOlderCount == 0 && initial.olderCursor == null) return
         mutable.update { it.copy(olderLoading = true, olderError = null) }
-        olderJob = viewModelScope.launch(Dispatchers.IO) {
+        olderJob = accountScope.launch(Dispatchers.IO) {
             try {
                 if (initial.hiddenOlderCount > 0) {
                     mutable.update { state ->
@@ -704,7 +842,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         mutable.update { it.copy(loading = true) }
         action {
         val options = mutable.value
-        val result = rpc.call("thread/start", buildJsonObject { mobileParams(options).forEach { (k, v) -> put(k, v) }; put("historyMode", "legacy"); project?.roots?.firstOrNull()?.let { put("cwd", it) } })
+        val result = rpc.call("thread/start", buildJsonObject { mobileParams(options).forEach { (k, v) -> put(k, v) }; put("historyMode", "legacy"); newChatDirectory(options, project)?.let { put("cwd", it) } })
         val chat = parseChat(result.obj("thread")); mutable.update { it.copy(chats = listOf(chat) + it.chats.filter { c -> c.id != chat.id }) }
         store.chatOptions(chat.id, options.chatMode, options.accessMode)
         open(chat)
@@ -742,7 +880,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             (edit.text.isBlank() && edit.attachments.isEmpty())) return
         if (!mutable.compareAndSet(source, source.copy(sending = true, sentMessageEdit = edit.copy(working = true, error = null)))) return
         val session = store.session()
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             inputMutex.withLock {
                 var branchId = edit.branchId
                 var forkAttempted = false
@@ -800,7 +938,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         if (!mutable.compareAndSet(state, state.copy(sending = true, notice = null, writerConflict = false))) return
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             inputMutex.withLock {
             var mutationAttempted = false
             var acknowledged = false
@@ -887,7 +1025,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             }
         }, onRejected = { candidate, error, cause ->
             mutable.update { it.withInfoNotice(NoticeKey(NoticeKind.QueueDelivery, candidate.chatId), "Queued message paused: $error") }
-            if (cause is SessionExpiredException) { disconnect(); clearSession(cause.message) }
+            if (cause is SessionExpiredException) clearSession(cause.message)
         })
     }
     fun continueInNewChat() {
@@ -896,7 +1034,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         if (!source.writerConflict || source.sending || source.uploading || source.uncertainSend ||
             source.connection != "Connected" || original.archived) return
         mutable.update { it.copy(sending = true, notice = null) }
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             var copiedId: String? = null
             try {
                 val result = rpc.call("thread/fork", recoveryParams(source))
@@ -949,7 +1087,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             val id = java.util.UUID.randomUUID().toString()
             val pending = Attachment(id, "Preparing attachment…", 0, "", buildJsonObject {}, uploading = true)
             mutable.update { it.copy(attachments = it.attachments + pending, uploading = true, notice = null) }
-            val job = viewModelScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            val job = accountScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
                 try {
                     val resolver = getApplication<Application>().contentResolver
                     var name = "attachment"
@@ -1027,7 +1165,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         if (initial.connection != "Connected" || initial.pending.none { it.id == request.id } || request.id in initial.answeringInputs) return
         if (!mutable.compareAndSet(initial, initial.copy(answeringInputs = initial.answeringInputs + request.id,
                 inputErrors = initial.inputErrors - request.id))) return
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             try {
                 rpc.call("bridge/respond", buildJsonObject { put("requestId", request.id); put("result", result) })
                 mutable.update { it.copy(pending = it.pending.filter { r -> r.id != request.id }) }
@@ -1048,7 +1186,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val reply = questionReply(item.questions, answers)
         if (!mutable.compareAndSet(initial, initial.copy(sending = true, answeringInputs = initial.answeringInputs + item.id,
                 inputErrors = initial.inputErrors - item.id))) return
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             inputMutex.withLock {
                 var attempted = false
                 var acknowledged = false
@@ -1094,7 +1232,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         val identity = store.sessionIdentity
         val epoch = lastEpoch
         if (!mutable.compareAndSet(source, source.copy(loading = true))) return
-        viewModelScope.launch(Dispatchers.IO) {
+        accountScope.launch(Dispatchers.IO) {
             fun sameContext() = identity == store.sessionIdentity && epoch == lastEpoch
             try {
                 inputMutex.withLock {
@@ -1136,7 +1274,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         cachedList = JsonArray(cachedList.filterNot { it.jsonObject.text("id") == id })
         saveFavorites(); saveCache()
     }
-    private fun applyEvents(events: List<JsonObject>) {
+    private fun applyEvents(received: List<JsonObject>) { synchronized(accountStateLock) {
+        if (!mutable.value.signedIn || rpc.epoch.isEmpty()) return
+        val events = received.filter { it.text("_bridgeEpoch") == rpc.epoch }
+        if (events.isEmpty()) return
         events.filter { it.text("method") == "thread/deleted" && (it.text("_bridgeEpoch").isEmpty() || it.text("_bridgeEpoch") == lastEpoch) }.forEach { forgetDeletedChat(it.obj("params").text("threadId")) }
         val currentEvents = events.filter { it.text("_bridgeEpoch").isEmpty() || it.text("_bridgeEpoch") == lastEpoch }
         // Subscription replay can reach the actor before connect() returns its snapshot.
@@ -1207,7 +1348,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         events.filter { it.text("method") == "turn/completed" }.forEach { event -> queueAction { messageQueue.pauseForCompletion(event, lastEpoch) } }
         if (currentEvents.any { libraryChanged(it.text("method")) }) requestLibrarySync(false)
         if (events.any { it.text("method").startsWith("thread/") }) refreshFavoriteSummaries()
-    }
+    } }
     private fun refreshFavoriteSummaries() {
         mutable.update { state ->
             val current = state.chats.associateBy { it.id }
@@ -1218,13 +1359,16 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private fun saveCache() {
         cachedList = JsonArray(cachedList.filterNot { it.jsonObject.text("id") in deletedChats })
         cachedThreads = JsonObject(cachedThreads.filterKeys { it !in deletedChats })
-        refreshFavoriteSummaries(); store.saveCache(buildJsonObject { put("threads", cachedThreads); put("chats", cachedList); put("inventory", cachedInventory) }) }
-    private fun action(recoveryKey: NoticeKey? = null, block: suspend () -> Unit) = viewModelScope.launch(Dispatchers.IO) {
+        if (mutable.value.signedIn && cachedAccountKey == store.accountKey) {
+            refreshFavoriteSummaries(); store.saveCache(buildJsonObject { put("threads", cachedThreads); put("chats", cachedList); put("inventory", cachedInventory) }, cachedAccountKey)
+        } }
+    private fun action(recoveryKey: NoticeKey? = null, block: suspend () -> Unit) = accountScope.launch(Dispatchers.IO) {
+        val identity = store.sessionIdentity
         mutable.update { it.copy(loading = true) }
         try { block() } catch (e: Exception) { if (e is CancellationException) throw e
             if (e is SessionExpiredException) { disconnect(); clearSession(e.message) }
             else mutable.update { if (recoveryKey == null) it.copy(notice = e.message ?: "Action failed") else it.withInfoNotice(recoveryKey, e.message ?: "Action failed") } }
-        finally { mutable.update { it.copy(loading = false) } }
+        finally { if (identity == store.sessionIdentity) mutable.update { it.copy(loading = false) } }
     }
     override fun onCleared() { rpc.close(); super.onCleared() }
 }

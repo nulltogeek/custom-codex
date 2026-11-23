@@ -21,6 +21,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -36,11 +37,14 @@ import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -97,18 +101,30 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val DarkColors = darkColorScheme(primary = Color(0xFFF0B90B), onPrimary = Color(0xFF181A20),
-    primaryContainer = Color(0xFF3A3216), onPrimaryContainer = Color(0xFFF0B90B),
-    secondaryContainer = Color(0xFF3A3216), onSecondaryContainer = Color(0xFFF0B90B), surfaceTint = Color(0xFFF0B90B),
-    background = Color(0xFF0B0E11), onBackground = Color(0xFFEAECEF), surface = Color(0xFF181A20),
-    onSurface = Color(0xFFEAECEF), surfaceVariant = Color(0xFF202630), onSurfaceVariant = Color(0xFF9DA8B8),
-    outline = Color(0xFF343B46), secondary = Color(0xFF45D4A0), error = Color(0xFFFF7B85))
-private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimary = Color.White,
-    primaryContainer = Color(0xFFEEE9F8), onPrimaryContainer = Color(0xFF713BF5),
-    secondaryContainer = Color(0xFFEEE9F8), onSecondaryContainer = Color(0xFF713BF5), surfaceTint = Color(0xFF713BF5),
-    background = Color(0xFFF8F7FC), onBackground = Color(0xFF211D32), surface = Color.White,
-    onSurface = Color(0xFF211D32), surfaceVariant = Color(0xFFEEE9F8), onSurfaceVariant = Color(0xFF6B617D),
-    outline = Color(0xFFD6CEE3), secondary = Color(0xFF078B66), error = Color(0xFFB83249))
+private val DarkColors = darkColorScheme(
+    primary = Color(0xFFF3F3F3), onPrimary = Color(0xFF171717),
+    primaryContainer = Color(0xFF303030), onPrimaryContainer = Color(0xFFECECEC),
+    secondaryContainer = Color(0xFF303030), onSecondaryContainer = Color(0xFFECECEC),
+    background = Color(0xFF212121), onBackground = Color(0xFFECECEC),
+    surface = Color(0xFF212121), onSurface = Color(0xFFECECEC),
+    surfaceVariant = Color(0xFF303030), onSurfaceVariant = Color(0xFFB4B4B4),
+    surfaceContainerLowest = Color(0xFF171717), surfaceContainerLow = Color(0xFF262626),
+    surfaceContainer = Color(0xFF303030), surfaceContainerHigh = Color(0xFF383838),
+    surfaceContainerHighest = Color(0xFF424242), surfaceTint = Color.Transparent,
+    outline = Color(0xFF5A5A5A), outlineVariant = Color(0xFF3A3A3A),
+    secondary = Color(0xFF81C7A7), error = Color(0xFFFF8A8A))
+private val LightColors = lightColorScheme(
+    primary = Color(0xFF171717), onPrimary = Color.White,
+    primaryContainer = Color(0xFFECECEC), onPrimaryContainer = Color(0xFF171717),
+    secondaryContainer = Color(0xFFF1F1F1), onSecondaryContainer = Color(0xFF171717),
+    background = Color.White, onBackground = Color(0xFF171717),
+    surface = Color.White, onSurface = Color(0xFF171717),
+    surfaceVariant = Color(0xFFF0F0F0), onSurfaceVariant = Color(0xFF6B6B6B),
+    surfaceContainerLowest = Color.White, surfaceContainerLow = Color(0xFFF9F9F9),
+    surfaceContainer = Color(0xFFF3F3F3), surfaceContainerHigh = Color(0xFFECECEC),
+    surfaceContainerHighest = Color(0xFFE5E5E5), surfaceTint = Color.Transparent,
+    outline = Color(0xFFABABAB), outlineVariant = Color(0xFFE5E5E5),
+    secondary = Color(0xFF16845B), error = Color(0xFFBB3030))
 
 @Composable fun RemoteTheme(mode: String, accent: String = "exchange", motion: Boolean = true, content: @Composable () -> Unit) {
     val dark = mode == "dark" || (mode == "system" && isSystemInDarkTheme())
@@ -126,49 +142,84 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         else -> base.primary
     }
     val primary by animateColorAsState(requested, tween(if (motion) 180 else 0), label = "Theme accent")
-    val container = lerp(base.surface, primary, 0.14f)
+    val container = if (accent == "exchange" || accent == "neutral") base.primaryContainer else lerp(base.surface, primary, 0.10f)
     MaterialTheme(colorScheme = base.copy(primary = primary, primaryContainer = container,
-        onPrimaryContainer = primary, secondaryContainer = container, onSecondaryContainer = primary, surfaceTint = primary),
-        shapes = Shapes(small = RoundedCornerShape(8.dp), medium = RoundedCornerShape(12.dp), large = RoundedCornerShape(16.dp)), content = content)
+        onPrimaryContainer = primary, secondaryContainer = container, onSecondaryContainer = primary, surfaceTint = Color.Transparent),
+        typography = Typography(
+            bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 26.sp),
+            bodyMedium = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
+            bodySmall = TextStyle(fontSize = 13.sp, lineHeight = 19.sp),
+            titleLarge = TextStyle(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold),
+            titleMedium = TextStyle(fontSize = 17.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium),
+            titleSmall = TextStyle(fontSize = 15.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium)),
+        shapes = Shapes(small = RoundedCornerShape(12.dp), medium = RoundedCornerShape(20.dp), large = RoundedCornerShape(28.dp)), content = content)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun RemoteApp(state: ScreenState, vm: RemoteViewModel) {
-    var approvalId by rememberSaveable { mutableStateOf<String?>(null) }
-    var asyncQuestion by rememberSaveable { mutableStateOf<String?>(null) }
-    var confirmArchive by remember { mutableStateOf<Chat?>(null) }
-    var confirmDelete by remember { mutableStateOf<Chat?>(null) }
+    var approvalId by rememberSaveable(state.endpoint, state.username, state.signedIn) { mutableStateOf<String?>(null) }
+    var asyncQuestion by rememberSaveable(state.endpoint, state.username, state.signedIn) { mutableStateOf<String?>(null) }
+    var confirmArchive by remember(state.endpoint, state.username, state.signedIn) { mutableStateOf<Chat?>(null) }
+    var confirmDelete by remember(state.endpoint, state.username, state.signedIn) { mutableStateOf<Chat?>(null) }
     val pending = state.pending.find { it.id == approvalId }
-    BackHandler(state.diff != null || state.selectedChat != null) {
-        if (state.diff != null) vm.showDiff(null) else vm.page(state.page)
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    fun dismissKeyboard() { focus.clearFocus(); keyboard?.hide() }
+    fun closeDrawer(action: () -> Unit = {}) {
+        dismissKeyboard()
+        action()
+        scope.launch { drawer.close() }
     }
+    BackHandler(drawer.isOpen || state.diff != null || state.selectedChat != null) {
+        when { drawer.isOpen -> closeDrawer(); state.diff != null -> vm.showDiff(null); else -> vm.page(state.page) }
+    }
+    LaunchedEffect(state.signedIn, state.username) { drawer.close() }
+    LaunchedEffect(drawer.currentValue) {
+        if (state.signedIn && drawer.currentValue == DrawerValue.Closed) dismissKeyboard()
+    }
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = state.signedIn,
+        drawerContent = {
+            if (state.signedIn) RemoteDrawer(state, vm,
+                navigate = { page -> closeDrawer { vm.page(page) } },
+                newChat = { closeDrawer { vm.newChat(state.projects.find { it.id == state.projectFilter }) } },
+                openChat = { chat -> closeDrawer { vm.open(chat) } },
+                openProject = { project -> closeDrawer { vm.filterProject(project.id) } },
+                close = { closeDrawer() })
+        }) {
     Scaffold(containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(expandedHeight = 56.dp, title = {
-                Column {
-                    Text(if (state.diff != null) "Changed code" else state.selectedChat?.title ?: "Codex Remote", maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-                    if (state.signedIn) Text(state.host, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
+            if (state.signedIn) TopAppBar(expandedHeight = 56.dp, title = {
+                if (state.selectedChat != null && state.diff == null) ComposerOptions(state, vm, compact = true)
+                else Text(when {
+                    state.diff != null -> "Changed code"
+                    state.page == "projects" -> "Projects"
+                    state.page == "archived" -> "Archived chats"
+                    state.page == "settings" -> "Settings"
+                    state.page == "users" -> "Manage users"
+                    else -> "Codex"
+                }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
             }, navigationIcon = {
-                if (state.diff != null || state.selectedChat != null) IconButton(onClick = { if (state.diff != null) vm.showDiff(null) else vm.page(state.page) }) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back")
+                IconButton(onClick = { if (state.diff != null) vm.showDiff(null) else { dismissKeyboard(); scope.launch { drawer.open() } } },
+                    modifier = Modifier.testTag("open-navigation")) {
+                    if (state.diff != null) Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", Modifier.size(24.dp))
+                    else Box(Modifier.semantics { contentDescription = "Open navigation" }) { NavigationGlyph() }
                 }
             }, actions = {
-                if (state.signedIn) {
-                    IconButton(onClick = { vm.refresh() }, enabled = canRefreshHistory(state)) { Icon(Icons.Outlined.Refresh, "Refresh history") }
-                    state.selectedChat?.let { chat ->
-                        ChatOptionsMenu(chat, canRename(state), canMoveChat(state), { vm.beginRename(chat) }, { vm.beginMoveChat(chat) },
-                            canArchive(state, chat), { confirmArchive = chat })
-                        FavoriteButton(state.favoriteChats.any { it.id == chat.id }, "chat ${chat.title}") { vm.favorite(chat) }
-                        if (chat.archived) IconButton(onClick = { confirmDelete = chat }, enabled = canDeleteChat(state, chat)) { Icon(Icons.Outlined.DeleteOutline, "Delete chat") }
-                    }
+                IconButton(onClick = { vm.newChat(state.projects.find { it.id == state.projectFilter }) },
+                    enabled = state.connection == "Connected" && !state.loading,
+                    modifier = Modifier.testTag("header-new-chat")) { Icon(Icons.Outlined.Edit, "Start new chat", Modifier.size(23.dp)) }
+                state.selectedChat?.let { chat ->
+                    ChatOptionsMenu(chat, canRename(state), canMoveChat(state), { vm.beginRename(chat) }, { vm.beginMoveChat(chat) },
+                        canArchive(state, chat), { confirmArchive = chat })
+                    if (chat.archived) IconButton(onClick = { confirmDelete = chat }, enabled = canDeleteChat(state, chat)) { Icon(Icons.Outlined.DeleteOutline, "Delete chat") }
                 }
+                if (state.selectedChat == null) IconButton(onClick = { vm.refresh() }, enabled = canRefreshHistory(state)) { Icon(Icons.Outlined.Refresh, "Refresh history") }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
-        }, bottomBar = {
-            if (state.signedIn && state.selectedChat == null && state.diff == null) LibraryNavigation(state.page, vm::page)
         }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            if (state.loading && !(state.refreshing && state.selectedChat == null && state.page in listOf("chats", "archived", "projects"))) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (state.loading && !(state.refreshing && state.selectedChat == null && state.page in listOf("chats", "archived", "projects"))) LinearProgressIndicator(Modifier.fillMaxWidth(), trackColor = MaterialTheme.colorScheme.surfaceVariant)
             if (state.signedIn && state.connection != "Connected") Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.CloudOff, null, Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
@@ -179,15 +230,17 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             if (state.writerConflict && state.selectedChat != null) ThreadWriterNotice(state, vm::continueInNewChat)
             val screenKey = when { !state.signedIn -> "login"; state.diff != null -> "diff"; state.selectedChat != null -> "chat:${state.selectedChat.id}"; else -> state.page }
             Crossfade(screenKey, Modifier.weight(1f), animationSpec = tween(if (state.motion) 160 else 0), label = "Screen transition") { screen -> when {
-                screen == "login" -> ConnectionScreen(state.endpoint, state.username, state.loading, vm::signIn)
+                screen == "login" -> AccountSignIn(state, vm)
                 screen == "diff" && state.diff != null -> DiffScreen(state.diff)
                 screen.startsWith("chat:") && state.selectedChat != null -> key(state.selectedChat.id) { Conversation(state, vm, approval = { approvalId = it.id }, answerQuestion = { asyncQuestion = it.id }) }
                 screen == "projects" -> ProjectScreen(state, vm)
                 screen == "settings" -> SettingsScreen(state, vm)
+                screen == "users" && state.userManagementAvailable -> ManageUsersScreen(state, vm)
                 screen == "archived" -> ChatsScreen(state, vm, approval = { approvalId = it.id }, archive = { confirmArchive = it }, delete = { confirmDelete = it }, archivedOnly = true)
                 else -> ChatsScreen(state, vm, approval = { approvalId = it.id }, archive = { confirmArchive = it }, delete = { confirmDelete = it })
             } }
         }
+    }
     }
     if (pending?.method == "item/tool/requestUserInput") QuestionDialog(pending.id, pending.questions(),
         state.connection == "Connected", pending.id in state.answeringInputs, state.inputErrors[pending.id],
@@ -215,49 +268,10 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     state.renameTarget?.let { target -> RenameDialog(target, state.renaming, state.connection == "Connected", state.renameError,
         vm::dismissRename, vm::rename) }
     state.newProjectKey?.let { key -> NewProjectDialog(key, state.projectCreateRequest, state.creatingProject,
-        state.connection == "Connected", state.projectCreateError, vm::dismissNewProject, vm::createProject) }
+        state.connection == "Connected", state.projectCreateError, vm::dismissNewProject, vm::createProject,
+        initialFolders = defaultProjectFolders(state)) }
     state.moveChat?.let { chat -> MoveChatDialog(chat, state.projects, state.movingChat, state.connection == "Connected",
         state.moveChatError, vm::dismissMoveChat, vm::moveChatToProject) }
-}
-
-@Composable internal fun LibraryNavigation(selectedPage: String, navigate: (String) -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surface) {
-        Row(Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            listOf(Triple("chats", "Chats", Icons.AutoMirrored.Outlined.Chat), Triple("archived", "Archived", Icons.Outlined.Archive),
-                Triple("projects", "Projects", Icons.Outlined.FolderOpen), Triple("settings", "Settings", Icons.Outlined.Settings)).forEach { (page, label, icon) ->
-                TextButton(onClick = { navigate(page) }, modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("nav-$page").semantics { selected = selectedPage == page },
-                    colors = ButtonDefaults.textButtonColors(containerColor = if (selectedPage == page) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
-                        contentColor = if (selectedPage == page) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant),
-                    contentPadding = PaddingValues(horizontal = 6.dp)) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.height(4.dp))
-                        Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable private fun ConnectionScreen(initialEndpoint: String, initialUsername: String, loading: Boolean, signIn: (String, String, String) -> Unit) {
-    var endpoint by rememberSaveable { mutableStateOf(initialEndpoint) }
-    var username by rememberSaveable { mutableStateOf(initialUsername) }
-    // Password is intentionally excluded from saved instance state and local storage.
-    var password by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Spacer(Modifier.height(20.dp))
-        Surface(color = MaterialTheme.colorScheme.primary, shape = RoundedCornerShape(16.dp)) {
-            Text("</>", Modifier.padding(20.dp), color = MaterialTheme.colorScheme.onPrimary, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 28.sp)
-        }
-        Text("Your Codex.\nWithin reach.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Text("Connect to your computer to follow work, send instructions and approve actions from anywhere on your private network.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        OutlinedTextField(endpoint, { endpoint = it }, Modifier.fillMaxWidth(), label = { Text("Server URL") }, placeholder = { Text("https://codex.geeksun.ir") }, singleLine = true, enabled = !loading)
-        OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("Username") }, singleLine = true, enabled = !loading)
-        OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Password") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), enabled = !loading)
-        Button(onClick = { signIn(endpoint, username, password) }, Modifier.fillMaxWidth().height(52.dp), enabled = !loading && endpoint.isNotBlank() && username.isNotBlank() && password.isNotEmpty()) { Icon(Icons.Outlined.Login, null); Spacer(Modifier.width(8.dp)); Text("Sign in") }
-        Text("Your projects, tools and credentials stay on your computer. This app connects to Codex app-server on that computer.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -303,15 +317,11 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 allSelected = selectedChats.size == list.size,
                 cancel = { selectedIds = emptySet() }, delete = { confirmIds = selectedChats.map { it.id }.toSet() },
                 selectAll = { selectedIds = if (selectedChats.size == list.size) emptySet() else list.map { it.id }.toSet() })
-            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("catalog-list"), state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("catalog-list"), state = listState, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 item {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(if (archivedOnly) "Archived chats" else project?.name ?: "Your workspace", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                StatusDot(state.connection == "Connected"); Spacer(Modifier.width(6.dp))
-                                Text(if (archivedOnly) "${state.chats.count { it.archived }} loaded archived chats" + (project?.let { " · ${it.name}" } ?: "") else "${state.projects.size} projects · ${state.chats.size} loaded chats", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                            Text(if (archivedOnly) "Archived chats" else project?.name ?: "Your chats", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         if (project != null) IconButton(onClick = { vm.filterProject(null) }) { Icon(Icons.Outlined.Close, "All projects") }
                         if (!archivedOnly) FilledTonalIconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat") }
@@ -351,7 +361,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 }
 
 @Composable private fun CompactSearch(query: String, onQuery: (String) -> Unit, label: String = "Search all chats") {
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), shape = RoundedCornerShape(14.dp)) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(50)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Search, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.width(8.dp))
@@ -373,25 +383,20 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     Surface(modifier = Modifier.testTag("chat-row:${chat.id}").combinedClickable(onClick = onClick, onLongClick = onLongClick,
         onLongClickLabel = if (onLongClick != null) "Select chat" else null, role = if (selecting) Role.Checkbox else Role.Button)
         .semantics { if (selecting) { this.selected = selected; toggleableState = if (selected) ToggleableState.On else ToggleableState.Off } },
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (selecting) Checkbox(selected, onCheckedChange = null, modifier = Modifier.size(32.dp))
-            else Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(10.dp)) {
-                Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
-                    Icon(if (chat.parentId != null || chat.source == "subAgent") Icons.Outlined.AccountTree else Icons.AutoMirrored.Outlined.Chat, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
-                }
-            }
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent, shape = RoundedCornerShape(12.dp)) {
+        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 0.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (selecting) { Checkbox(selected, onCheckedChange = null, modifier = Modifier.size(40.dp)); Spacer(Modifier.width(8.dp)) }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(chat.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    if (chat.pinned) Icon(Icons.Outlined.PushPin, "Pinned", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                    if (chat.parentId != null || chat.source == "subAgent") { Icon(Icons.Outlined.AccountTree, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)) }
+                    Text(chat.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    if (chat.pinned) Icon(Icons.Outlined.PushPin, "Pinned", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (chat.preview.isNotBlank() && chat.preview != chat.title) Text(chat.preview, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(project, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                if (project != "No project" || chat.status == "active" || chat.archived) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (project != "No project") Text(project, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (chat.archived) Text("Archived", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (chat.status == "active") { StatusDot(true); Spacer(Modifier.width(4.dp)); Text("Running", style = MaterialTheme.typography.labelSmall) }
+                    if (chat.status == "active") { StatusDot(true); Text("Running", style = MaterialTheme.typography.labelSmall) }
                 }
             }
             if (!selecting) {
@@ -413,7 +418,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Projects", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("Saved on ${state.host}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Keep related chats together", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Text("${state.projects.size}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
@@ -426,16 +431,16 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             } }
             items(projects, key = { it.id }) { project ->
                 val count = state.chats.count { chatBelongsToProject(it, project, state.assignments) }
-                Surface(onClick = { vm.filterProject(project.id) }, color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp)) {
+                Surface(onClick = { vm.filterProject(project.id) }, color = Color.Transparent, shape = RoundedCornerShape(14.dp)) {
                     Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(10.dp)) {
+                        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
                             IconButton(onClick = { folders = project }) { Icon(Icons.Outlined.FolderOpen, "Folders for ${project.name}", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary) }
                         }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(project.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                             Text(project.roots.firstOrNull() ?: "No folder", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("$count loaded chats" + if (project.roots.size > 1) " · ${project.roots.size} folders" else "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            Text("$count chats" + if (project.roots.size > 1) " · ${project.roots.size} folders" else "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                         }
                         FavoriteButton(project.id in state.favoriteProjectIds, "project ${project.name}") { favorite(project) }
                         IconButton(onClick = { rename(project) }, enabled = canRename(state)) { Icon(Icons.Outlined.Edit, "Rename project ${project.name}", Modifier.size(20.dp)) }
@@ -456,7 +461,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
 @Composable private fun Conversation(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit, answerQuestion: (TimelineItem) -> Unit) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) vm.attach(uris) }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (state.selectedChat?.status == "active" || state.selectedChat?.archived == true || state.pending.any { it.params.text("threadId") == state.selectedChat?.id } || state.lastTurnStatus in listOf("failed", "interrupted")) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             val active = state.selectedChat?.status == "active"
             CommandActivity(state)
             Text(when {
@@ -504,7 +509,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 .collect { nearStart -> if (nearStart) loadOlder() }
     }
     Column(modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        if (messages.any { it.type == "userMessage" } || hasOlder) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             TextButton(onClick = { showQuestions = true }, modifier = Modifier.testTag("your-questions"),
                 enabled = messages.any { it.type == "userMessage" } || hasOlder) {
                 Icon(Icons.Outlined.FormatListBulleted, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -513,7 +518,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             }
         }
     Box(Modifier.weight(1f).fillMaxWidth()) {
-        LazyColumn(Modifier.fillMaxSize().testTag("history-list"), state = listState, reverseLayout = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(Modifier.fillMaxSize().testTag("history-list"), state = listState, reverseLayout = true, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
             items(messages.asReversed(), key = { it.id }, contentType = { it.type }) { item ->
                 MessageItem(item, showDiff, loadImage, answerQuestion, item.id in state.answeredInputs || questionAnswered(item, state.timeline),
                     editMessage = editMessage, canEdit = !state.sending && !state.loading && !state.uploading && !state.uncertainSend && state.selectedChat?.archived != true,
@@ -527,7 +532,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                 }
             }
             else if (state.timeline.isEmpty() && !state.historyAvailable && state.selectedChat?.preview?.isNotBlank() == true) item { EmptyState("Earlier messages unavailable", "New messages will appear here. You can continue this conversation.") }
-            else if (state.timeline.isEmpty()) item { EmptyState(if (state.chatMode == "chat") "A new conversation" else "Ready to build", if (state.chatMode == "chat") "Ask a question, share an image, or discuss an idea." else "Describe the work, attach a file, and choose how Codex can access your computer.") }
+            else if (state.timeline.isEmpty()) item { NewConversationGreeting(state.chatMode) }
             if (hasOlder) item(key = "history-footer") {
                 PageLoader(state.olderLoading, state.olderError, "Earlier messages load as you scroll", state.hiddenOlderCount > 0 || state.connection == "Connected") { loadOlder() }
             }
@@ -586,11 +591,12 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
     val finalChanges = item.type == "finalChanges"
     val label = if (user) "YOU" else if (item.type == "finalChanges") "CHANGES" else if (item.type == "error") "ERROR" else if (!tool) "CODEX" else if (item.type == "commandExecution") "COMMAND" else item.type.uppercase()
     Box(Modifier.fillMaxWidth().testTag("message:${item.id}")) {
-    Surface(modifier = Modifier.fillMaxWidth(if (user) 0.88f else if (item.type == "agentMessage") 0.94f else 1f)
-        .align(if (user) AbsoluteAlignment.TopRight else AbsoluteAlignment.TopLeft),
-        color = if (user) MaterialTheme.colorScheme.surfaceVariant else if (tool) MaterialTheme.colorScheme.surface else Color.Transparent,
-        border = if (highlighted) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null, shape = RoundedCornerShape(12.dp)) {
-        Column(Modifier.fillMaxWidth().padding(if (tool || user) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier = Modifier.fillMaxWidth(if (user) 0.88f else 1f)
+        .align(if (user) AbsoluteAlignment.TopRight else AbsoluteAlignment.TopLeft)) {
+    Surface(modifier = Modifier.fillMaxWidth(),
+        color = if (user) MaterialTheme.colorScheme.surfaceVariant else if (tool) MaterialTheme.colorScheme.surfaceContainerLow else Color.Transparent,
+        border = if (highlighted) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null, shape = RoundedCornerShape(if (user) 24.dp else 14.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = if (tool || user) 16.dp else 0.dp, vertical = if (tool || user) 12.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             if (tool || finalChanges) Surface(onClick = { expanded = !expanded }, modifier = Modifier.testTag("${if (finalChanges) "changes" else "command"}:${item.id}"), color = Color.Transparent) {
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -600,21 +606,11 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
                     }
                     Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (finalChanges) { if (expanded) "Collapse changes" else "Expand changes" } else if (expanded) "Collapse $label" else "Expand $label")
                 }
-            } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(label, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                if (user && editMessage != null && item.turnId.isNotBlank()) IconButton(
-                    onClick = { editMessage(item) }, enabled = canEdit,
-                    modifier = Modifier.size(48.dp).testTag("edit-message:${item.id}")
-                ) { Icon(Icons.Outlined.Edit, "Edit your message", Modifier.size(18.dp)) }
-                if (item.type in listOf("userMessage", "agentMessage") && item.text.isNotBlank()) IconButton(
-                    onClick = { clipboard.setText(AnnotatedString(item.text)); copied = true },
-                    modifier = Modifier.size(48.dp).testTag("copy-message:${item.id}")
-                ) { Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
-                    if (copied) "Message copied" else if (user) "Copy your message" else "Copy Codex message", Modifier.size(18.dp)) }
             }
             if ((!tool && !finalChanges) || expanded) {
                 Column(if (tool) Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()) else Modifier,
                     verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (item.type == "error") Text("Something went wrong", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Medium)
                 if (item.detail.isNotBlank()) SelectionContainer { Text(item.detail, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall) }
                 val visible = item.text.take(visibleLimit)
                 if (item.commandOutputOmitted) Text("Command output was not downloaded. Enable Load command output in Settings to fetch it.",
@@ -638,6 +634,16 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
             }
             }
         }
+    }
+    if (!tool && !finalChanges && item.type != "error") Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
+        if (item.text.isNotBlank()) IconButton(onClick = { clipboard.setText(AnnotatedString(item.text)); copied = true },
+            modifier = Modifier.size(40.dp).testTag("copy-message:${item.id}")) {
+            Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
+                if (copied) "Message copied" else if (user) "Copy your message" else "Copy Codex message", Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (user && editMessage != null && item.turnId.isNotBlank()) IconButton(onClick = { editMessage(item) }, enabled = canEdit,
+            modifier = Modifier.size(40.dp).testTag("edit-message:${item.id}")) { Icon(Icons.Outlined.Edit, "Edit your message", Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
     }
     }
 }
@@ -673,7 +679,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         Text("APPEARANCE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("system", "dark", "light").forEach { mode -> FilterChip(selected = state.theme == mode, onClick = { vm.theme(mode) }, label = { Text(mode.replaceFirstChar { it.uppercase() }) }) } }
         Text("ACCENT STYLE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("exchange", "ocean", "mint", "rose", "violet").forEach { accent -> FilterChip(selected = state.accent == accent, onClick = { vm.accent(accent) }, label = { Text(accent.replaceFirstChar { it.uppercase() }) }) } }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("exchange", "ocean", "mint", "rose", "violet").forEach { accent -> FilterChip(selected = state.accent == accent, onClick = { vm.accent(accent) }, label = { Text(if (accent == "exchange") "Default" else accent.replaceFirstChar { it.uppercase() }) }) } }
         Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text("Animations"); Text("Smooth screen and color transitions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; Switch(checked = state.motion, onCheckedChange = vm::motion) }
         HorizontalDivider()
         CommandOutputSettings(state.loadCommandOutput, state.commandOutputChanging, state.commandOutputMessage, vm::loadCommandOutput)
@@ -702,7 +708,7 @@ private val LightColors = lightColorScheme(primary = Color(0xFF713BF5), onPrimar
         OutlinedButton(onClick = { signOut = true }, enabled = !state.loading && !state.updateDownloading && !state.passwordChanging) { Text("Sign out") }
         HorizontalDivider()
         Text("Codex Remote · ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
-        Text("A personal Android client. Work runs on your computer using its permissions and existing Codex account. Keep the Codex server running and your computer awake.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("An Android client for your private Codex server. Each account has its own chats and projects. Keep the server running and the computer awake.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     if (password) ChangePasswordDialog(state.passwordChanging, state.passwordMessage, state.passwordChanged,
         state.connection == "Connected", onDismiss = { password = false }, changePassword = vm::changePassword)

@@ -10,8 +10,8 @@ android {
         applicationId = "dev.nulltogeek.codexremote"
         minSdk = 30
         targetSdk = 35
-        versionCode = 32
-        versionName = "0.7.24"
+        versionCode = 33
+        versionName = "0.8.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
@@ -23,6 +23,10 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+    }
+    // Preserve the installed app's signing identity when building on another host.
+    System.getenv("CODEX_ANDROID_KEYSTORE")?.let { keyPath ->
+        signingConfigs.getByName("debug").storeFile = file(keyPath)
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions {

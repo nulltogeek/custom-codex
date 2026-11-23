@@ -39,6 +39,11 @@ fun parseAttachment(raw: JsonObject) = Attachment(raw.text("id"), raw.text("name
 fun Attachment.toJson() = buildJsonObject { put("id", id); put("name", name); put("size", size); put("mimeType", mimeType); put("input", input); put("previewPath", previewPath); put("uploadProgress", uploadProgress); put("uploadError", uploadError) }
 data class ScreenState(
     val endpoint: String = "", val username: String = "", val signedIn: Boolean = false, val connection: String = "Offline",
+    val accountId: String = "", val accountRole: String = "user", val userManagementAvailable: Boolean = false,
+    val registrationAvailable: Boolean = true, val adminUsers: List<ManagedUser> = emptyList(),
+    val availableAccessModes: List<String> = listOf("host", "ask", "read-only", "full"), val workspaceRoot: String = "",
+    val usersLoading: Boolean = false, val userMutationPending: Boolean = false, val signupEnabled: Boolean = true,
+    val userManagementMessage: String = "",
     val host: String = "Your computer", val projects: List<Project> = emptyList(),
     val assignments: Map<String, String> = emptyMap(), val chats: List<Chat> = emptyList(),
     val favoriteChats: List<Chat> = emptyList(), val favoriteProjectIds: Set<String> = emptySet(),

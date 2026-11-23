@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -38,9 +39,8 @@ import kotlinx.coroutines.withContext
     val canAttach = state.connection == "Connected" && !state.uploading && !state.sending && state.selectedChat?.archived != true
     val canSend = (state.draft.isNotBlank() || state.attachments.isNotEmpty()) && state.attachments.all { it.readyToSend } && canAttach && !state.uncertainSend
     val queueMessage = state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty() || state.queuedMessages.any { it.chatId == state.selectedChat?.id }
-    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 8.dp, vertical = 4.dp).testTag("chat-composer"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            ComposerOptions(state, vm)
+    Surface(color = MaterialTheme.colorScheme.background) {
+        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 12.dp, vertical = 8.dp).testTag("chat-composer"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             MessageQueueView(state, edit = { message, text, attachments -> vm.editQueued(message.id, text, attachments) },
                 move = vm::moveQueued, remove = vm::removeQueued, pause = vm::pauseQueue, resume = vm::resumeQueue, retry = vm::retryQueued)
             if (state.attachments.isNotEmpty()) {
@@ -53,10 +53,10 @@ import kotlinx.coroutines.withContext
                 }
             }
             if (state.uncertainSend) TextButton(onClick = { vm.refresh() }) { Text("Refresh and check delivery") }
-            Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), shape = RoundedCornerShape(18.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+            Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(28.dp)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.Bottom) {
                     Box {
-                        IconButton(onClick = { attachmentMenu = true }, enabled = canAttach) { Icon(Icons.Outlined.AttachFile, "Attach file or image", Modifier.size(20.dp)) }
+                        IconButton(onClick = { attachmentMenu = true }, enabled = canAttach) { Icon(Icons.Outlined.Add, "Attach file or image", Modifier.size(25.dp)) }
                         DropdownMenu(attachmentMenu, { attachmentMenu = false }) {
                             DropdownMenuItem(text = { Text("Photo or image") }, leadingIcon = { Icon(Icons.Outlined.Image, null) }, onClick = { attachmentMenu = false; onPick(arrayOf("image/*")) })
                             DropdownMenuItem(text = { Text("File") }, leadingIcon = { Icon(Icons.Outlined.InsertDriveFile, null) }, onClick = { attachmentMenu = false; onPick(arrayOf("*/*")) })
@@ -68,12 +68,12 @@ import kotlinx.coroutines.withContext
                     if (state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty()) IconButton(
                         onClick = { vm.interrupt() }, enabled = state.connection == "Connected" && !state.loading,
                         modifier = Modifier.size(48.dp).testTag("stop-work")
-                    ) { Icon(Icons.Outlined.Stop, "Stop", Modifier.size(24.dp), tint = MaterialTheme.colorScheme.error) }
+                    ) { Icon(Icons.Outlined.StopCircle, "Stop", Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurface) }
                     Box(Modifier.size(48.dp).testTag("send-message"), contentAlignment = Alignment.Center) {
                         FilledIconButton(onClick = { vm.send() },
                             enabled = canSend,
-                            modifier = Modifier.size(40.dp)) {
-                            if (state.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.AutoMirrored.Outlined.Send, if (queueMessage) "Queue message" else "Send", Modifier.size(20.dp))
+                            modifier = Modifier.size(36.dp), shape = CircleShape) {
+                            if (state.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.ArrowUpward, if (queueMessage) "Queue message" else "Send", Modifier.size(23.dp))
                         }
                     }
                 }

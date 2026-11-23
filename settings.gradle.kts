@@ -1,14 +1,15 @@
 pluginManagement {
     repositories {
+        mavenCentral()
         if (providers.gradleProperty("codexGoogleCdn").orNull == "true") maven("https://redirector.gvt1.com/edgedl/android/maven2") else google()
-        mavenCentral(); gradlePluginPortal()
+        gradlePluginPortal()
     }
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        if (providers.gradleProperty("codexGoogleCdn").orNull == "true") maven("https://redirector.gvt1.com/edgedl/android/maven2") else google()
         mavenCentral()
+        if (providers.gradleProperty("codexGoogleCdn").orNull == "true") maven("https://redirector.gvt1.com/edgedl/android/maven2") else google()
     }
 }
 rootProject.name = "CodexRemote"

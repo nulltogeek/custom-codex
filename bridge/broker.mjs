@@ -22,18 +22,22 @@ const key = id => `${typeof id}:${JSON.stringify(id)}`;
 /** One host-initialized upstream connection, with independently routed client IDs.
  * The historical 'desktop' role is also used by the standalone local initializer. */
 export class Broker {
-  constructor({ upstream, desktop, maxEvents = 2048, maxBytes = 8 * 1024 * 1024, onResult = () => {}, onNotification = () => {} }) {
+  constructor({ upstream, desktop, maxEvents = 2048, maxBytes = 8 * 1024 * 1024, onResult = () => {}, onNotification = () => {}, authorize = () => {} }) {
     this.upstream = upstream; this.desktop = desktop; this.onResult = onResult;
     this.onNotification = onNotification;
+    this.authorize = authorize;
     this.epoch = randomUUID(); this.sequence = 0; this.serial = 0;
     this.ready = false; this.initResult = null;
     this.initializationError = null; this.desktopNotificationSeen = false;
     this.requests = new Map(); this.serverRequests = new Map(); this.clients = new Map();
     this.threadModels = new Map();
+    this.activeTurns = new Set();
+    this.lastActivityAt = Date.now();
     this.events = []; this.bytes = 0; this.maxEvents = maxEvents; this.maxBytes = maxBytes;
   }
   addClient(id, send) { this.clients.set(id, { send, subscribed: false, loadCommandOutput: true }); }
   removeClient(id) {
+    this.lastActivityAt = Date.now();
     this.clients.delete(id);
     // A disconnected caller's mutation remains upstream. It is never retried.
     for (const request of this.requests.values()) if (request.client === id) request.client = null;
@@ -61,6 +65,7 @@ export class Broker {
     for (const c of this.clients.values()) if (c.subscribed) c.send(commandEvent(event, c.loadCommandOutput));
   }
   accept(client, message) {
+    this.lastActivityAt = Date.now();
     if (!message || typeof message !== 'object' || Array.isArray(message)) return;
     if (typeof message.method === 'string') {
       const { method, params = {}, id } = message;
@@ -105,7 +110,10 @@ export class Broker {
           this.sendTo(client, { id, result: this.initResult }); return;
         }
         if (method === 'initialized') return;
+        if (!((typeof id === 'string' && id.length <= 256) || Number.isSafeInteger(id))) { this.error(client, null, -32600, 'Mobile requests require a short string or integer ID'); return; }
         if (!PHONE_METHODS.has(method)) { this.error(client, id, -32601, 'Method is outside the mobile client interface'); return; }
+        try { this.authorize(method, params); }
+        catch (error) { this.error(client, id, -32602, error.message); return; }
         if (FORBIDDEN_OVERRIDES.some(field => Object.hasOwn(params, field)) ||
             (method === 'account/read' && params.refreshToken === true) ||
             (method === 'thread/metadata/update' && Object.keys(params).some(k => !['threadId', 'isPinned', 'projectId'].includes(k)))) {
@@ -140,9 +148,14 @@ export class Broker {
         catch (error) { this.error(client, id, -32602, error.message); return; }
       }
       if (id !== undefined) {
+        if (client !== 'desktop' && (this.requests.size >= 256 || [...this.requests.values()].filter(request => request.client === client).length >= 64)) {
+          this.error(client, id, -32029, 'Too many pending requests. Wait for current requests to finish.'); return;
+        }
         const upstreamId = `android-bridge:${++this.serial}`;
         this.requests.set(key(upstreamId), { client, id, method, threadId: params.threadId });
-        this.upstream({ ...message, params: forwardedParams, id: upstreamId });
+        if (this.upstream({ ...message, params: forwardedParams, id: upstreamId }) === false) {
+          this.requests.delete(key(upstreamId)); this.error(client, id, -32029, 'Backend request queue is full. Try again later.');
+        }
       } else {
         if (client === 'desktop' && method === 'initialized') this.ready = this.initResult !== null;
         if (client === 'desktop' && method === 'initialized') this.desktopNotificationSeen = true;
@@ -164,6 +177,11 @@ export class Broker {
     }
   }
   receive(message) {
+    this.lastActivityAt = Date.now();
+    if (message?.method === 'turn/started') this.activeTurns.add(message.params?.threadId);
+    if (message?.method === 'turn/completed') this.activeTurns.delete(message.params?.threadId);
+    if (message?.method === 'thread/status/changed' && message.params?.status?.type === 'active') this.activeTurns.add(message.params?.threadId);
+    if (message?.method === 'thread/status/changed' && ['idle', 'notLoaded'].includes(message.params?.status?.type)) this.activeTurns.delete(message.params?.threadId);
     if (typeof message?.method === 'string') {
       if (message.id !== undefined) {
         const pending = { ...message, requestId: `${this.epoch}:${++this.serial}` };

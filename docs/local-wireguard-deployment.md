@@ -1,93 +1,96 @@
-# Local Codex server through the existing WireGuard VPS
+# Container Codex server through the existing WireGuard VPS
 
-The app-server runs on `/home/nulltogeek`'s Linux machine. The VPS at `79.175.177.57` runs only the existing Nginx reverse proxy. The Android URL is **https://codex.geeksun.ir**. The desktop can be closed; the Linux machine, user service and WireGuard tunnel must remain available.
+As of November 10, 2026, the standalone app-server runs inside the systemd desktop container at **192.168.1.7** on `emz-ops-work1`. Its project is `/home/nulltogeek/Desktop/nulltogeek/custom-codex`. The VPS at `79.175.177.57` runs the existing Nginx proxy; the Android URL remains **https://codex.geeksun.ir**. GNOME and the desktop app can be closed. The container, user service and WireGuard tunnel must remain available.
 
-As of October 11, 2026, APK 0.7.4 and the deployed standalone server use **username/password login**. See [pull-to-refresh](mobile-0.7.4.md), [Chats list pagination](mobile-0.7.3.md), [picker/upload recovery](mobile-0.7.2.md), [desktop-owned chat recovery](mobile-0.7.1.md), [favorites, swipe archive and password changes](mobile-0.7.0.md), [chat loading and composer improvements](mobile-0.6.0.md), [the current in-app update guide](in-app-updates.md) and [login guide](username-password-login.md); the older token-based verification below is historical.
-
-The model-provider HTTP 401 was repaired later on October 11. Real replies and a follow-up now pass through the deployed HTTPS/WSS endpoint; see [the authentication repair](#provider-authentication-repaired-on-october-11-2026).
+The original local `codex-remote.service` is disabled and stopped; source files remain for recovery. The container retains its own existing `.codex` configuration and history. The prepared filmapp chat queue was not imported, and no recurring sync was installed.
 
 ```mermaid
 flowchart LR
     Phone[Android with WireGuard] -->|HTTPS login and authenticated WSS| Proxy[codex.geeksun.ir:443\nVPS Nginx]
-    Proxy -->|HTTP and WS over WireGuard| Bridge[192.168.1.2:8787\nLocal authenticated adapter]
-    Bridge -->|JSON RPC over stdio| Codex[Local Codex 0.159.2 app-server]
-    Codex --> Home[Existing .codex config and history]
-    Codex --> Files[Local project files and tools]
+    Proxy -->|HTTP and WS over WireGuard| Bridge[192.168.1.7:8787\nContainer authenticated adapter]
+    Bridge -->|JSON RPC over stdio| Codex[Private Codex 0.167.0-alpha.3.2 app-server]
+    Codex --> Home[Existing container .codex config and history]
+    Codex --> Files[Container project files and tools]
 ```
 
-## Installed components and ownership
+## Installed components and persistence
 
-| Component | Location or setting | Purpose |
+| Component | Container location or setting | Purpose |
 | --- | --- | --- |
-| Backend | `/usr/lib/chatgpt/resources/codex`, version 0.159.2 | Public app-server over stdio |
-| Codex home | `/home/nulltogeek/.codex` | Existing config, projects, history and host policy |
-| Adapter | `bridge/standalone.mjs` in this repository | Authenticated HTTP snapshots and WebSocket RPC/events |
-| User service | `~/.config/systemd/user/codex-remote.service` | Run independently of the desktop |
-| Service drop-in | `~/.config/systemd/user/codex-remote.service.d/20-wireguard.conf` | Bind only to `192.168.1.2`; load private provider environment; retry startup every 10 seconds if the interface is late |
-| Provider environment | `~/.config/custom-codex/provider.env`, mode 0600 | Supply the configured `EMZANO_AI_KEY` to systemd without putting it in process arguments |
-| Login account | `~/.local/share/custom-codex/account.json`, mode 0600 | Salted scrypt password hash for the standalone server |
-| Initial login reference | `~/.local/share/custom-codex/initial-login.json`, mode 0600 | View username/password locally with `vim`; never send in chat |
-| VPS vhost | `/opt/reverse-proxy/conf.d/codex.geeksun.ir.conf` | Existing TLS/VPN ACL plus new upstream `http://192.168.1.2:8787` |
-| Proxy process | Docker container `reverse-proxy`, host networking | Existing proxy; host Nginx service is inactive |
-| Vhost backup | `/opt/reverse-proxy/backups/codex.geeksun.ir.conf.20261010T192016Z` | Recover the previous `.13:3000` upstream |
+| Backend | `~/.local/lib/custom-codex/runtime/bin/codex`, version 0.167.0-alpha.3.2, plus its sibling `codex-code-mode-host` | Durable app-server independent of desktop package changes |
+| Node | `~/.local/lib/custom-codex/runtime/bin/node`, version 22.23.2 | Official Linux binary, verified against its SHA256 manifest; no global Node/npm installation |
+| Codex home | `/home/nulltogeek/.codex` | Existing target configuration, projects, history and policy |
+| Adapter | `/home/nulltogeek/Desktop/nulltogeek/custom-codex/bridge/standalone.mjs` | Authenticated HTTP and WebSocket RPC/events |
+| User service | `~/.config/systemd/user/codex-remote.service` | Enabled under real systemd; user lingering is enabled |
+| VPN readiness | `~/.local/lib/custom-codex/wait-vpn.py` | Wait for the VPN address before startup; bind only to `192.168.1.7:8787`; retry after failure |
+| Provider environment | `~/.config/custom-codex/provider.env`, mode 0600 | Supply `EMZANO_AI_KEY` without exposing it in arguments |
+| Account and uploads | `~/.local/share/custom-codex/account.json` and `uploads/` | Original current password hash and 22 source upload files preserved |
+| APK updates | Project `artifacts/updates/` | Exact release/debug 0.7.24 manifests and referenced APKs |
+| VPS vhost | `/opt/reverse-proxy/conf.d/codex.geeksun.ir.conf` | Existing TLS, VPN ACL and WebSocket settings; upstream and Host are `192.168.1.7:8787` |
+| Vhost backup | `/opt/reverse-proxy/backups/codex.geeksun.ir.conf.20261110T125727Z-before-192.168.1.7` | Previous `.2:8787` configuration |
 
-`config.toml` was not modified: a before/after SHA256 comparison passed. No Codex credentials, projects or history were copied to the VPS. No desktop files were patched or original desktop work interrupted. The damaged all-NUL pairing-token file was preserved as `pairing-token.corrupt-20261010`, then replaced with a valid token. Validation now rejects malformed token files.
+Application files, private runtimes, credentials and uploads live in the persistent developer home volume. The migration did not replace `config.toml` or saved target chats. Standalone and desktop processes share saved configuration/history but own separate live turns and approvals.
 
-The service is enabled and active. User lingering was already enabled. Boot, full logout and WireGuard outage recovery were not exercised; no machine or container was restarted. Nginx received a validated graceful reload.
-
-Sharing the Codex home shares saved configuration/history. Standalone and ordinary desktop processes have separate live work and approvals. Connected Android/test clients share the standalone runtime. Use the optional desktop launcher only if you need one live runtime shared with the desktop, after finishing existing work.
+The transferred local service credential was stale. A credential from the working local Codex backend was verified with a minimal no-tools streaming request on both machines, then installed only in the target service's private environment file. The transferred credential remains privately backed up. No credential values were added to this repository or logs.
 
 ## Connect the phone
 
-1. Enable the phone's existing private WireGuard connection. It must reach the VPS private endpoint and use VPN DNS for `codex.geeksun.ir`. On the inspected Linux host, that name resolves to `10.42.42.1`.
-2. Install `artifacts/codex-remote-release.apk` using Android's normal APK installer. Android 11 or newer is required. For an authorized USB device, `adb install -r artifacts/codex-remote-release.apk` installs or upgrades it while retaining application data.
-3. Open the initial login reference with `vim ~/.local/share/custom-codex/initial-login.json`. Enter username `nulltogeek` and its password (or your new password after changing it in Settings) in the APK's sign-in fields, with server URL `https://codex.geeksun.ir`. Never put the password in a URL or chat message. The APK manages its authenticated `wss://codex.geeksun.ir/v1/rpc` session internally and stores the session encrypted with Android Keystore.
+1. Enable the phone's existing WireGuard connection and VPN DNS for `codex.geeksun.ir`.
+2. Keep the same server URL, **https://codex.geeksun.ir**. No APK rebuild or URL change is required; current update assets are 0.7.24.
+3. Sign in again as `nulltogeek` using your current app password. Migration invalidated in-memory sessions while preserving the existing password hash. The old `initial-login.json` reference is obsolete; it was not copied or used to reset your password.
 
-Nginx preserves the existing VPN-only access policy (`192.168.1.0/24` and the observed wg-easy masquerade source `10.42.42.42`). It forwards WebSocket upgrades with buffering disabled and a one-hour read timeout. Public non-VPN access was tested and returned 403. Backend inventory/RPC also requires a session issued by username/password login. The TLS certificate was verified without disabling validation; the existing wildcard certificate expires December 18, 2026. Certificate renewal remains the existing proxy administrator's responsibility.
+Nginx retains its VPN-only access policy, TLS validation, 21 MB request limit and WebSocket forwarding. Physical-phone sign-in after migration remains to be checked from the phone.
 
 ## Checks and recovery
 
-Start with one inspection and examine its output before changing anything:
+Connect to the container first, then inspect one result before proceeding:
+
+```bash
+ssh -i ~/.ssh/emzano -o IdentitiesOnly=yes nulltogeek@192.168.1.7
+```
+
+Inspect the user service without interrupting it:
 
 ```bash
 systemctl --user show codex-remote.service -p ActiveState -p SubState -p MainPID
 ```
 
-This checks the standalone service without affecting desktop work. If it is running, check the WireGuard listener:
+Check its VPN listener, then the normal TLS proxy path:
 
 ```bash
-curl --noproxy '*' --fail --max-time 10 http://192.168.1.2:8787/healthz
+curl --noproxy '*' --fail --max-time 10 http://192.168.1.7:8787/healthz
 ```
-
-Then check the private proxy path:
 
 ```bash
 curl --noproxy '*' --fail --max-time 10 https://codex.geeksun.ir/healthz
 ```
 
-Health exposes only `{"ok":true}`. For authenticated metadata, inventory, two-client RPC/events and replay checks, run from this repository:
+Health returns only `{"ok":true}`; protected HTTP and WebSocket endpoints require authentication. For a full check, provide the current username/password in an owner-only JSON file outside the repository, then set `CODEX_INITIAL_LOGIN_FILE` to that file when invoking the verifier with the private runtime. Do not use the stale initial-login reference or put passwords in arguments.
 
 ```bash
-node scripts/verify-server.mjs https://codex.geeksun.ir --local-inventory
+CODEX_INITIAL_LOGIN_FILE=/run/user/1000/custom-codex-verification-login.json \
+  ~/.local/lib/custom-codex/runtime/bin/node scripts/verify-server.mjs https://codex.geeksun.ir --local-inventory --model
 ```
 
-The verifier reads the owner-only initial login reference directly, signs in and revokes its test session afterward; it does not put credentials in arguments or print provider error bodies. It creates an ephemeral verification chat, leaving saved history unchanged.
-
-If the provider rejects generation, inspect its authentication separately from app login. The earlier environment credential expired at `2026-10-06T09:16:09Z`, causing HTTP 401 until the October 11 repair. Renew it through the provider's normal authentication flow and edit the private environment file using `vim ~/.config/custom-codex/provider.env`, preserving the `EMZANO_AI_KEY="..."` assignment and mode 0600. Preserve an owner-only backup before changing the file. Do not paste the value into chat or put it in this repository. This service reads its own environment file; updating a terminal variable or the desktop's environment does not update a running service. The Codex `model_providers.<id>.env_key` setting names the variable to supply; see the [official configuration reference](https://developers.openai.com/codex/config-reference/).
-
-After saving a renewed credential and confirming the standalone server has no work to preserve, restarting **only this service** loads the new value:
+The verifier creates an ephemeral chat and omits provider error bodies. If generation fails, inspect provider authentication separately from app login. Preserve an owner-only backup, edit `~/.config/custom-codex/provider.env` using `vim`, and retain mode 0600. A renewed environment file is loaded only after restarting this user service. Confirm no active turns or pending approvals before a restart, which ends its live runtime and requires app sign-in again.
 
 ```bash
 systemctl --user restart codex-remote.service
 ```
 
-Restart only after confirming there are no active turns or pending approvals; it ends the server's live runtime and changes the replay epoch. It also invalidates app sessions, requiring a fresh sign-in. The ordinary desktop runtime is separate. Android refreshes authoritative state after reconnect and never automatically resends uncertain prompts. Verify generation and a follow-up with:
+If proxy health fails while direct target health works, inspect only the Codex vhost using `ssh -i ~/.ssh/emzano -o IdentitiesOnly=yes root@79.175.177.57`. Run `docker exec reverse-proxy nginx -t` before a graceful `docker exec reverse-proxy nginx -s reload`.
 
-```bash
-node scripts/verify-server.mjs https://codex.geeksun.ir --local-inventory --model
-```
+For rollback, first restore a verified provider environment for the original local service: its original environment file was stale. Private verified credential backups and migration receipts are retained in the migration staging directories. Start/enable the local service, verify `.2:8787`, restore the saved vhost, validate/reload Nginx, then stop the target service. Restoring the proxy alone is insufficient because the local service is disabled.
 
-If proxy health fails but local health works, inspect only the Codex vhost on the VPS. Use the authorized SSH identity `~/.ssh/emzano`. Validate with `docker exec reverse-proxy nginx -t` before any graceful `docker exec reverse-proxy nginx -s reload`. Do not restart unrelated containers or the inactive host Nginx service. Compare the saved vhost backup before making a recovery edit with `vim`; restoring the old upstream points back to the earlier service, not this app-server.
+## Verified on November 10, 2026
+
+- Staged source bridge tests: **60 passed**. Private Node version, SQLite and CLI smoke checks passed; official Node archive SHA256 was verified.
+- Isolated target runtime with separate test account/uploads: valid and invalid login, HTTP/WS access checks, exact target inventory (**9 models, 4 projects, 251 active and 4 archived chats**), mirrored events, model streaming, cross-client follow-up, reconnect and sign-out revocation all passed.
+- Both exact 0.7.24 APKs were downloaded through authenticated endpoints, with byte count/SHA256 verification; synthetic text, image and 2 MB binary uploads passed.
+- Production user service startup and restart passed, lingering is enabled, and the listener is restricted to `.7:8787`. The source account hash and all 22 upload files matched immediately before cutover.
+- VPS reached the target directly. Nginx validation and graceful reload passed. Normal TLS domain health returned 200, protected HTTP and unauthorized WSS returned 401, and domain health remained good after the local service stopped.
+
+Real-account phone sign-in, a full container reboot after this application installation, and real interactive approvals remain unverified. The exact same application and current account hash are deployed; valid login/model tests used an isolated test account rather than resetting the real password. Historical checks below describe earlier deployments.
 
 ## Verified on October 10, 2026
 

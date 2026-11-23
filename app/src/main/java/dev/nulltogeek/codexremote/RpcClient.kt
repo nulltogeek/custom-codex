@@ -33,7 +33,7 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
     @Volatile var sequence = 0L; private set
     @Volatile private var socket: WebSocket? = null
     private var opened: CompletableDeferred<Unit>? = null
-    private var endpoint = ""; private var token = ""
+    @Volatile private var endpoint = ""; @Volatile private var token = ""
 
     fun configure(endpoint: String, token: String = "") {
         val url = endpoint.toHttpUrlOrNull() ?: throw IllegalArgumentException("Enter a valid HTTPS host URL")
@@ -42,28 +42,56 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
         require(url.username.isEmpty() && url.password.isEmpty() && url.query == null && url.encodedPath == "/" && url.fragment == null) { "Use a host URL without credentials, path or query" }
         this.endpoint = endpoint.trimEnd('/'); this.token = token
     }
-    suspend fun login(endpoint: String, username: String, password: String): LoginSession = withContext(Dispatchers.IO) {
+    suspend fun login(endpoint: String, username: String, password: String): LoginSession = authenticate(endpoint, username, password, false)
+    suspend fun signup(endpoint: String, username: String, password: String): LoginSession = authenticate(endpoint, username, password, true)
+    private suspend fun authenticate(endpoint: String, username: String, password: String, signup: Boolean): LoginSession = withContext(Dispatchers.IO) {
         configure(endpoint)
         require(username.isNotBlank() && password.isNotEmpty()) { "Enter a username and password" }
         val body = buildJsonObject { put("username", username); put("password", password) }
             .toString().toRequestBody("application/json".toMediaType())
-        http.newCall(Request.Builder().url(this@RpcClient.endpoint + "/v1/login").post(body).build()).execute().use {
+        val session = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
+            .newCall(Request.Builder().url(this@RpcClient.endpoint + if (signup) "/v1/signup" else "/v1/login").post(body).build()).awaitParsed {
             if (!it.isSuccessful) throw IOException(when (it.code) {
+                400 -> if (signup) "Choose a username with 1–64 letters, numbers, dots, underscores or hyphens, and a password of at least 12 characters." else "Enter a username and password"
                 401 -> "Username or password was rejected"
+                403 -> if (signup) "New registrations are currently closed. Ask the administrator to create your account." else "This account is unavailable. Contact the administrator."
+                409 -> "That username is already taken. Choose another."
                 429 -> "Too many login attempts. Try again later."
-                else -> "Sign-in failed (HTTP ${it.code})"
+                404, 405, 501 -> if (signup) "Update the server to enable account registration." else "Sign-in failed (HTTP ${it.code})"
+                else -> if (signup) "Could not create your account (HTTP ${it.code})" else "Sign-in failed (HTTP ${it.code})"
             })
             val result = WireJson.parseToJsonElement(it.body?.string() ?: "{}").jsonObject
             val session = LoginSession(result.text("token"), result.text("username"), result["expiresAt"]?.jsonPrimitive?.longOrNull ?: 0)
             require(session.token.length == 43 && session.expiresAt > System.currentTimeMillis()) { "Invalid sign-in response" }
-            token = session.token; epoch = ""; sequence = 0
-            while (events.tryReceive().isSuccess) { }
             session
+        }
+        token = session.token; epoch = ""; sequence = 0
+        while (events.tryReceive().isSuccess) { }
+        session
+    }
+    /** Account management requests use the same private session and never follow redirects. */
+    suspend fun accountRequest(path: String, method: String, body: JsonObject = buildJsonObject {}): JsonObject = withContext(Dispatchers.IO) {
+        require(path == "/v1/admin/users" || path == "/v1/admin/settings" ||
+            Regex("^/v1/admin/users/[A-Za-z0-9._-]+(?:/revoke)?$").matches(path)) { "Invalid account request" }
+        require(method in listOf("GET", "POST", "PATCH")) { "Invalid account method" }
+        val request = Request.Builder().url(endpoint + path).header("Authorization", "Bearer $token")
+        if (method == "GET") request.get() else request.method(method, body.toString().toRequestBody("application/json".toMediaType()))
+        http.newBuilder().followRedirects(false).followSslRedirects(false).build().newCall(request.build()).awaitParsed {
+            if (it.code == 401) throw SessionExpiredException()
+            if (!it.isSuccessful) throw IOException(when (it.code) {
+                400 -> "Check the username, password, or requested account change."
+                403 -> "This action is available to the administrator. You cannot disable your own administrator account."
+                404 -> "The user is no longer available. Refresh the user list."
+                409 -> "The username is already taken, or that change conflicts with the account state."
+                429 -> "Too many account requests. Try again later."
+                else -> "Could not update users (HTTP ${it.code})"
+            })
+            WireJson.parseToJsonElement(it.body?.string() ?: "{}").jsonObject
         }
     }
     suspend fun logout() = withContext(Dispatchers.IO) {
         http.newCall(Request.Builder().url(endpoint + "/v1/logout").header("Authorization", "Bearer $token")
-            .post("{}".toRequestBody("application/json".toMediaType())).build()).execute().use {
+            .post("{}".toRequestBody("application/json".toMediaType())).build()).awaitParsed {
             if (!it.isSuccessful && it.code != 401) throw IOException("Sign-out failed (HTTP ${it.code})")
         }
     }
@@ -72,7 +100,7 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
             .toString().toRequestBody("application/json".toMediaType())
         http.newBuilder().followRedirects(false).followSslRedirects(false).build()
             .newCall(Request.Builder().url(endpoint + "/v1/password").header("Authorization", "Bearer $token").post(body).build())
-            .execute().use {
+            .awaitParsed {
                 if (it.code == 401) throw SessionExpiredException()
                 if (!it.isSuccessful) throw IOException(when (it.code) {
                     400 -> "Use a different password with at least 12 characters and at most 1024 bytes."
@@ -86,7 +114,7 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
             }
     }
     suspend fun get(path: String): JsonObject = withContext(Dispatchers.IO) {
-        http.newCall(Request.Builder().url(endpoint + path).header("Authorization", "Bearer $token").build()).execute().use {
+        http.newCall(Request.Builder().url(endpoint + path).header("Authorization", "Bearer $token").build()).awaitParsed {
             if (it.code == 401) throw SessionExpiredException()
             if (!it.isSuccessful) throw HostHttpException(it.code)
             WireJson.parseToJsonElement(it.body?.string() ?: "{}").jsonObject
@@ -161,14 +189,18 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
     }
     suspend fun downloadAppUpdate(update: AppUpdate, directory: File, progress: (Int) -> Unit): File = withContext(Dispatchers.IO) {
         // Keep session headers on this configured host; update metadata cannot redirect downloads.
-        http.newBuilder().followRedirects(false).followSslRedirects(false).callTimeout(15, TimeUnit.MINUTES).build()
-            .newCall(Request.Builder().url(endpoint + update.downloadPath).header("Authorization", "Bearer $token").build()).execute().use {
+        val call = http.newBuilder().followRedirects(false).followSslRedirects(false).callTimeout(15, TimeUnit.MINUTES).build()
+            .newCall(Request.Builder().url(endpoint + update.downloadPath).header("Authorization", "Bearer $token").build())
+        val cancellation = launch(start = CoroutineStart.UNDISPATCHED) {
+            try { awaitCancellation() } finally { call.cancel() }
+        }
+        try { call.execute().use {
                 if (it.code == 401) throw SessionExpiredException()
                 if (it.code != 200) throw IOException("Update download failed (HTTP ${it.code}). Check for updates and retry.")
                 val body = it.body ?: throw IOException("Empty update download")
                 if (body.contentLength() >= 0 && body.contentLength() != update.size) throw IOException("Update size did not match")
                 body.byteStream().use { input -> receiveAppUpdate(input, directory, update, progress) }
-            }
+            } } finally { cancellation.cancel() }
     }
     suspend fun connect(loadCommandOutput: Boolean = true, allowLegacyCommandOutput: Boolean = false): JsonObject {
         close(); status.value = "Connecting"; val ready = CompletableDeferred<Unit>(); opened = ready
@@ -268,4 +300,15 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
         previous?.close(1000, "Client paused")
         fail("Offline")
     }
+}
+
+/** Keep cancellation attached until the response body has been parsed and closed. */
+private suspend fun <T> Call.awaitParsed(parse: (Response) -> T): T = suspendCancellableCoroutine { continuation ->
+    continuation.invokeOnCancellation { cancel() }
+    enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) { continuation.resumeWith(Result.failure(e)) }
+        override fun onResponse(call: Call, response: Response) {
+            continuation.resumeWith(runCatching { response.use(parse) })
+        }
+    })
 }

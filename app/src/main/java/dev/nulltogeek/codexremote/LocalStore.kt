@@ -14,6 +14,7 @@ import kotlinx.serialization.json.*
 
 class LocalStore(private val context: Context) {
     private val prefs = context.getSharedPreferences("codex_remote", Context.MODE_PRIVATE)
+    init { migrateLegacyStorage() }
     val endpoint get() = prefs.getString("endpoint", "https://codex.geeksun.ir").orEmpty()
     val username get() = prefs.getString("username", "nulltogeek").orEmpty()
     val theme get() = prefs.getString("theme", "system").orEmpty()
@@ -21,6 +22,30 @@ class LocalStore(private val context: Context) {
     val taskNotifications get() = prefs.getBoolean("taskNotifications", false)
     val motion get() = prefs.getBoolean("motion", true)
     val loadCommandOutput get() = prefs.getBoolean("loadCommandOutput", true)
+    internal val accountKey get() = accountStorageKey(endpoint, username)
+    private fun accountEntry(kind: String, id: String, account: String = accountKey) = "account:$account:$kind:$id"
+    // The legacy cache belongs to the account saved before this version was installed.
+    // Claim it once before a new login can change that identity.
+    @android.annotation.SuppressLint("UseKtx")
+    private fun migrateLegacyStorage() = synchronized(prefs) {
+        if (prefs.getBoolean("accountStorageMigrated", false)) return@synchronized
+        val owner = accountKey
+        val old = java.io.File(context.filesDir, "history.json")
+        val target = java.io.File(context.filesDir, "history-$owner.json")
+        if (old.exists()) {
+            if (!target.exists()) check(old.renameTo(target)) { "Could not migrate saved history" }
+            else check(old.delete()) { "Could not remove legacy history" }
+        }
+        val editor = prefs.edit()
+        prefs.all.forEach { (key, value) ->
+            if (listOf("draft:", "attachments:", "mode:", "access:").any(key::startsWith) && value is String) {
+                val scoped = "account:$owner:$key"
+                if (!prefs.contains(scoped)) editor.putString(scoped, value)
+                editor.remove(key)
+            }
+        }
+        check(editor.putBoolean("accountStorageMigrated", true).commit()) { "Could not migrate saved drafts" }
+    }
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey("codex_remote_pairing", null) as? SecretKey)?.let { return it }
@@ -85,41 +110,44 @@ class LocalStore(private val context: Context) {
             } })); put("projects", JsonArray(projects.map(::JsonPrimitive)))
         }.toString()) }
     }
-    fun chatMode(id: String): String = prefs.getString("mode:$id", "codex").orEmpty()
-    fun accessMode(id: String): String = prefs.getString("access:$id", "host").orEmpty()
-    fun chatOptions(id: String, mode: String, access: String) { prefs.edit { putString("mode:$id", mode); putString("access:$id", access) } }
+    fun chatMode(id: String): String = prefs.getString(accountEntry("mode", id), "codex").orEmpty()
+    fun accessMode(id: String): String = prefs.getString(accountEntry("access", id), "host").orEmpty()
+    fun chatOptions(id: String, mode: String, access: String) { val account = accountKey; prefs.edit { putString(accountEntry("mode", id, account), mode); putString(accountEntry("access", id, account), access) } }
     fun copyChatDraft(from: String, to: String, mode: String, access: String) = synchronized(prefs) {
         require(from != to)
+        val account = accountKey
         prefs.edit {
-            putString("draft:$to", prefs.getString("draft:$from", ""))
-            putString("attachments:$to", prefs.getString("attachments:$from", "[]"))
-            putString("mode:$to", mode); putString("access:$to", access)
+            putString(accountEntry("draft", to, account), prefs.getString(accountEntry("draft", from, account), ""))
+            putString(accountEntry("attachments", to, account), prefs.getString(accountEntry("attachments", from, account), "[]"))
+            putString(accountEntry("mode", to, account), mode); putString(accountEntry("access", to, account), access)
         }
     }
     fun attachments(id: String): List<Attachment> = try {
-        WireJson.parseToJsonElement(prefs.getString("attachments:$id", "[]").orEmpty()).jsonArray.map { parseAttachment(it.jsonObject) }
+        WireJson.parseToJsonElement(prefs.getString(accountEntry("attachments", id), "[]").orEmpty()).jsonArray.map { parseAttachment(it.jsonObject) }
     } catch (_: Exception) { emptyList() }
-    fun attachments(id: String, value: List<Attachment>) { prefs.edit { putString("attachments:$id", JsonArray(value.map { it.toJson() }).toString()) } }
+    fun attachments(id: String, value: List<Attachment>) { prefs.edit { putString(accountEntry("attachments", id), JsonArray(value.map { it.toJson() }).toString()) } }
     @android.annotation.SuppressLint("UseKtx")
     fun editedDraft(id: String, input: JsonArray, mode: String, access: String) {
         val text = input.mapNotNull { it as? JsonObject }.filter { it.text("type") == "text" }.joinToString("\n") { it.text("text") }
-        check(prefs.edit().putString("draft:$id", text)
-            .putString("attachments:$id", JsonArray(sentAttachments(input).map { it.toJson() }).toString())
-            .putString("mode:$id", mode).putString("access:$id", access).commit()) { "Could not save the edited message. Try again." }
+        val account = accountKey
+        check(prefs.edit().putString(accountEntry("draft", id, account), text)
+            .putString(accountEntry("attachments", id, account), JsonArray(sentAttachments(input).map { it.toJson() }).toString())
+            .putString(accountEntry("mode", id, account), mode).putString(accountEntry("access", id, account), access).commit()) { "Could not save the edited message. Try again." }
     }
-    fun forgetChat(id: String) { prefs.edit { remove("draft:$id"); remove("attachments:$id"); remove("mode:$id"); remove("access:$id") } }
-    fun draft(id: String): String = synchronized(prefs) { prefs.getString("draft:$id", "").orEmpty() }
-    fun draft(id: String, text: String) { synchronized(prefs) { prefs.edit { putString("draft:$id", text) } } }
+    fun forgetChat(id: String) { val account = accountKey; prefs.edit { listOf("draft", "attachments", "mode", "access").forEach { remove(accountEntry(it, id, account)) } } }
+    fun draft(id: String): String = synchronized(prefs) { prefs.getString(accountEntry("draft", id), "").orEmpty() }
+    fun draft(id: String, text: String) { synchronized(prefs) { prefs.edit { putString(accountEntry("draft", id), text) } } }
     fun clearSentDraft(id: String, sentText: String): Boolean = synchronized(prefs) {
         // An acknowledgement may arrive after the user has already edited the next prompt.
-        if (prefs.getString("draft:$id", "").orEmpty() != sentText) false
-        else { prefs.edit { putString("draft:$id", "") }; true }
+        val key = accountEntry("draft", id)
+        if (prefs.getString(key, "").orEmpty() != sentText) false
+        else { prefs.edit { putString(key, "") }; true }
     }
-    @Synchronized fun saveCache(value: JsonObject) {
+    @Synchronized fun saveCache(value: JsonObject, account: String = accountKey) {
         val text = value.toString(); if (text.length > 8 * 1024 * 1024) return
-        val temp = java.io.File(context.filesDir, "history.tmp"); temp.writeText(text)
-        temp.renameTo(java.io.File(context.filesDir, "history.json"))
+        val temp = java.io.File(context.filesDir, "history-$account.tmp"); temp.writeText(text)
+        check(temp.renameTo(java.io.File(context.filesDir, "history-$account.json"))) { "Could not save history" }
     }
-    @Synchronized fun cache(): JsonObject = try { WireJson.parseToJsonElement(java.io.File(context.filesDir, "history.json").readText()).jsonObject }
+    @Synchronized fun cache(account: String = accountKey): JsonObject = try { WireJson.parseToJsonElement(java.io.File(context.filesDir, "history-$account.json").readText()).jsonObject }
         catch (_: Exception) { buildJsonObject {} }
 }

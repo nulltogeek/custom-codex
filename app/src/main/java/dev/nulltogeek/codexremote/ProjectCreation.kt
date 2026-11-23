@@ -38,9 +38,9 @@ internal fun inventoryWithProject(inventory: JsonObject, project: Project): Json
 internal fun canCreateProject(state: ScreenState) = canRename(state) && !state.creatingProject
 
 @Composable internal fun NewProjectDialog(key: String, request: ProjectCreateRequest?, saving: Boolean, connected: Boolean,
-    error: String?, dismiss: () -> Unit, create: (String, String) -> Unit) {
+    error: String?, dismiss: () -> Unit, create: (String, String) -> Unit, initialFolders: String = "") {
     var name by rememberSaveable(key) { mutableStateOf(request?.name.orEmpty()) }
-    var folders by rememberSaveable(key) { mutableStateOf(request?.roots?.joinToString("\n").orEmpty()) }
+    var folders by rememberSaveable(key) { mutableStateOf(request?.roots?.joinToString("\n") ?: initialFolders) }
     val validation = projectCreationValidation(name, folders)
     val locked = saving || request != null
     AlertDialog(onDismissRequest = { if (!saving) dismiss() }, title = { Text("New project") }, text = {
@@ -48,7 +48,8 @@ internal fun canCreateProject(state: ScreenState) = canRename(state) && !state.c
             OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().testTag("project-name"), label = { Text("Project name") }, singleLine = true, enabled = !locked)
             OutlinedTextField(folders, { folders = it }, Modifier.fillMaxWidth().testTag("project-folders"),
                 label = { Text("Folders on your computer (optional)") }, minLines = 2, maxLines = 5, enabled = !locked)
-            Text("Use full paths to existing folders, one per line. You can leave this empty for a project without folders.", style = MaterialTheme.typography.bodySmall)
+            Text(if (initialFolders.isNotBlank()) "Your private workspace is prefilled. Use existing folders inside it, one per line, or clear this field for a project without folders."
+                else "Use full paths to existing folders, one per line. You can leave this empty for a project without folders.", style = MaterialTheme.typography.bodySmall)
             if (name.isNotEmpty() && validation != null) Text(validation, color = MaterialTheme.colorScheme.error)
             if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
             if (!connected) Text("Reconnect to create your project.")
