@@ -83,8 +83,8 @@ After a local build has staged the update files, publish the live feed with:
 This validates APK signatures and metadata locally, checks uploaded bytes,
 backs up the prior manifests, and switches the live feeds without restarting
 the backend. It preserves old APKs and refuses changed or older versions and
-subsequent signing-key changes. The live feeds now advertise 0.9.2/code 36;
-0.9.0/0.9.1 installations can update in place. See [in-app updates](in-app-updates.md).
+subsequent signing-key changes. The live feeds now advertise 0.9.3/code 37;
+0.9.0/0.9.1/0.9.2 installations can update in place. See [in-app updates](in-app-updates.md).
 
 At import time, source was 0.8.0/code 33 but production update manifests were
 0.7.24/code 32. The 0.8.0 release notes explicitly report a signing-key change

@@ -23,7 +23,7 @@ Built locally with `scripts/build-local.sh`. APKs and source are delivered to
 `nulltogeek@192.168.1.7` under the existing project's
 `artifacts/releases/0.9.1/`. No backend change or restart is needed. The APK uses
 the 0.8.0/0.9.0 certificate, so it can update 0.9.0 in place. Both live updater
-feeds offer 0.9.2/code 36, including this navigation; see [in-app updates](in-app-updates.md).
+feeds offer 0.9.3/code 37, including this navigation; see [in-app updates](in-app-updates.md).
 Physical phone installation is not automated.
 
 Verification logs and fixture screenshots are retained locally under

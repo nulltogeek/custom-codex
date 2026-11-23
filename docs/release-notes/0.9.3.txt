@@ -1,0 +1,3 @@
+User creation now keeps the form open until the server confirms success, shows failures inside the form, and retains your entered details for correction. A confirmed account appears immediately even if refreshing the full list fails.
+
+Older user-list responses cannot overwrite a newly created user. The Manage users toolbar now refreshes users and no longer offers the unrelated New chat action. Unavailable or deleted usernames show an explicit explanation.

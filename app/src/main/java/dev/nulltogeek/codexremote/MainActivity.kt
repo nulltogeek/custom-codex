@@ -221,7 +221,7 @@ private val LightColors = lightColorScheme(
                     else NavigationGlyph()
                 }
             }, actions = {
-                IconButton(onClick = { vm.newChat(state.projects.find { it.id == state.projectFilter }) },
+                if (state.selectedChat != null || state.page != "users") IconButton(onClick = { vm.newChat(state.projects.find { it.id == state.projectFilter }) },
                     enabled = state.connection == "Connected" && !state.loading,
                     modifier = Modifier.testTag("header-new-chat")) { Icon(Icons.Outlined.Edit, "Start new chat", Modifier.size(23.dp)) }
                 state.selectedChat?.let { chat ->
@@ -231,7 +231,10 @@ private val LightColors = lightColorScheme(
                         fork = vm::forkChat, forkEnabled = canForkChat(state), modifier = Modifier.testTag("conversation-options"))
                     if (chat.archived) IconButton(onClick = { confirmDelete = chat }, enabled = canDeleteChat(state, chat)) { Icon(Icons.Outlined.DeleteOutline, "Delete chat") }
                 }
-                if (state.selectedChat == null) IconButton(onClick = { vm.refresh() }, enabled = canRefreshHistory(state)) { Icon(Icons.Outlined.Refresh, "Refresh history") }
+                if (state.selectedChat == null && state.page == "users") IconButton(onClick = vm::refreshUsers,
+                    enabled = state.connection == "Connected" && state.userManagementAvailable && !state.usersLoading && !state.userMutationPending,
+                    modifier = Modifier.testTag("header-refresh-users")) { Icon(Icons.Outlined.Refresh, "Refresh users") }
+                else if (state.selectedChat == null) IconButton(onClick = { vm.refresh() }, enabled = canRefreshHistory(state)) { Icon(Icons.Outlined.Refresh, "Refresh history") }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background))
         }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {

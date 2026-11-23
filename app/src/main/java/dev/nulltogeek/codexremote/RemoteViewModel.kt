@@ -19,6 +19,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private var accountJob: Job = SupervisorJob(viewModelScope.coroutineContext[Job])
     private val accountScope get() = CoroutineScope(viewModelScope.coroutineContext + accountJob)
     private val authenticationMutex = kotlinx.coroutines.sync.Mutex()
+    private val userManagementMutex = kotlinx.coroutines.sync.Mutex()
+    private val userListRevision = java.util.concurrent.atomic.AtomicLong()
     private val accountStateLock = Any()
     private val mutable = MutableStateFlow(ScreenState(endpoint = store.endpoint, username = store.username, theme = store.theme, accent = store.accent, motion = store.motion, loadCommandOutput = store.loadCommandOutput))
     val state: StateFlow<ScreenState> = mutable.asStateFlow()
@@ -251,32 +253,38 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         passwordChangeAvailable = host.obj("capabilities")["passwordChange"]?.jsonPrimitive?.booleanOrNull == true)
 
     fun refreshUsers() {
-        if (!mutable.value.userManagementAvailable || mutable.value.usersLoading) return
+        if (!mutable.value.userManagementAvailable || mutable.value.usersLoading || mutable.value.userMutationPending) return
         val identity = store.sessionIdentity
+        val revision = userListRevision.incrementAndGet()
         mutable.update { it.copy(usersLoading = true, userManagementMessage = "") }
         accountScope.launch(Dispatchers.IO) {
-            try { readManagedUsers(identity) }
+            try { readManagedUsers(identity, revision) }
             catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (identity == store.sessionIdentity) {
                     if (e is SessionExpiredException) clearSession(e.message)
-                    else mutable.update { it.copy(userManagementMessage = e.message ?: "Could not load users") }
+                    else mutable.update { if (revision != userListRevision.get()) it
+                        else it.copy(userManagementMessage = e.message ?: "Could not load users") }
                 }
             } finally { if (identity == store.sessionIdentity) mutable.update { it.copy(usersLoading = false) } }
         }
     }
-    private suspend fun readManagedUsers(identity: String) {
+    private suspend fun readManagedUsers(identity: String, revision: Long = userListRevision.incrementAndGet()) {
         val result = rpc.accountRequest("/v1/admin/users", "GET")
-        if (identity != store.sessionIdentity) return
-        mutable.update { it.copy(adminUsers = result.array("users").mapNotNull { raw -> (raw as? JsonObject)?.let(::parseManagedUser) },
-            signupEnabled = result["signupEnabled"]?.jsonPrimitive?.booleanOrNull == true) }
+        mutable.update { if (identity != store.sessionIdentity || revision != userListRevision.get()) it
+            else it.copy(adminUsers = result.array("users").mapNotNull { raw -> (raw as? JsonObject)?.let(::parseManagedUser) },
+                signupEnabled = result["signupEnabled"]?.jsonPrimitive?.booleanOrNull == true) }
     }
-    fun createUser(username: String, password: String) = manageUsers("User created.") {
+    fun clearUserManagementMessage() { mutable.update { it.copy(userManagementMessage = "") } }
+    fun createUser(username: String, password: String, onSuccess: () -> Unit = {}) = manageUsers("User created.", onSuccess) {
         require(validSignup(username, password, password)) { "Use a valid username and a password of at least 12 characters." }
         rpc.accountRequest("/v1/admin/users", "POST", jsonObject("username" to username.trim(), "password" to password))
+            .also { require(it.obj("user").text("id").isNotBlank() && it.obj("user").text("username").isNotBlank()) {
+                "The server did not confirm the new account. Refresh the user list before trying again."
+            } }
     }
-    fun updateUser(user: ManagedUser, disabled: Boolean? = null, password: String? = null) = manageUsers(
-        if (password != null) "Password reset. Previous sessions were signed out." else if (disabled == true) "User disabled and signed out." else "User enabled.") {
+    fun updateUser(user: ManagedUser, disabled: Boolean? = null, password: String? = null, onSuccess: () -> Unit = {}) = manageUsers(
+        if (password != null) "Password reset. Previous sessions were signed out." else if (disabled == true) "User disabled and signed out." else "User enabled.", onSuccess) {
         require(user.id.isNotBlank()) { "Refresh the user list before trying again." }
         require(disabled != true || user.id != mutable.value.accountId) { "You cannot disable your own administrator account." }
         password?.let { require(validSignup(user.username, it, it)) { "Use a password of at least 12 characters and at most 1024 bytes." } }
@@ -298,17 +306,34 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun setSignupEnabled(enabled: Boolean) = manageUsers(if (enabled) "New registrations are open." else "New registrations are closed.") {
         rpc.accountRequest("/v1/admin/settings", "PATCH", buildJsonObject { put("signupEnabled", enabled) })
     }
-    private fun manageUsers(success: String, request: suspend () -> JsonObject) {
+    private fun manageUsers(success: String, onSuccess: () -> Unit = {}, request: suspend () -> JsonObject) {
         val state = mutable.value
         if (!state.userManagementAvailable || state.userMutationPending) return
         val identity = store.sessionIdentity
+        userListRevision.incrementAndGet() // Invalidate list reads started before this account change.
         mutable.update { it.copy(userMutationPending = true, userManagementMessage = "") }
         accountScope.launch(Dispatchers.IO) {
             try {
-                request()
-                if (identity != store.sessionIdentity) return@launch
-                readManagedUsers(identity)
-                mutable.update { it.copy(userManagementMessage = success) }
+                userManagementMutex.withLock {
+                    val result = request()
+                    if (identity != store.sessionIdentity) return@withLock
+                    // The mutation response confirms the account even if a later
+                    // list refresh fails. Do not hide a successfully created user.
+                    result["user"]?.let { raw -> (raw as? JsonObject)?.let(::parseManagedUser) }
+                        ?.takeIf { it.id.isNotBlank() && it.username.isNotBlank() }?.let { user ->
+                            mutable.update { it.copy(adminUsers = it.adminUsers.filterNot { old -> old.id == user.id } + user) }
+                        }
+                    var message = success
+                    try { readManagedUsers(identity) }
+                    catch (e: Exception) {
+                        if (e is CancellationException || e is SessionExpiredException) throw e
+                        message = "$success Could not refresh the full user list. Tap Refresh users to retry."
+                    }
+                    if (identity == store.sessionIdentity) {
+                        mutable.update { it.copy(userManagementMessage = message) }
+                        withContext(Dispatchers.Main) { if (identity == store.sessionIdentity) onSuccess() }
+                    }
+                }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (identity == store.sessionIdentity) {

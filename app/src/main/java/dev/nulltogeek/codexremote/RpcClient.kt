@@ -82,7 +82,9 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
                 400 -> "Check the username, password, or requested account change."
                 403 -> "This action is available to the administrator. You cannot disable your own administrator account."
                 404 -> "The user is no longer available. Refresh the user list."
-                409 -> "The username is already taken, or that change conflicts with the account state."
+                409 -> if (method == "POST" && path == "/v1/admin/users")
+                    "This username is unavailable. It may already exist or belong to a deleted account. Choose a different username."
+                    else "That change conflicts with the account state. Refresh the user list and try again."
                 429 -> "Too many account requests. Try again later."
                 else -> "Could not update users (HTTP ${it.code})"
             })

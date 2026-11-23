@@ -31,6 +31,10 @@ Sign in as **nulltogeek**, open the navigation drawer, and choose **Manage users
 - View the user list and whether each account is enabled or disabled.
 - Open or close public registration with **Allow new registrations**.
 - Create a user directly using **Create user**, including while public registration is closed.
+- From 0.9.3, the creation form stays open while saving or if the server rejects
+  the request. Correct the displayed error and try again. On confirmation the
+  account appears immediately, including when a subsequent full-list refresh
+  fails. Both refresh buttons on this screen reload users.
 - Use a user's menu to disable or enable their account, reset their password, or sign out their current devices.
 - From 0.9.2, choose **Delete user** and confirm to permanently remove an account,
   sign out all its devices, and stop its running work. Saved server files remain

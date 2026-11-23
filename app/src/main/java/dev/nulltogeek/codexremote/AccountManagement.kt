@@ -108,7 +108,7 @@ import androidx.compose.ui.unit.dp
             }
         }
         item {
-            Button(onClick = { create = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag("create-user")) {
+            Button(onClick = { vm.clearUserManagementMessage(); create = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag("create-user")) {
                 Icon(Icons.Outlined.PersonAdd, null); Spacer(Modifier.width(8.dp)); Text("Create user")
             }
         }
@@ -119,17 +119,17 @@ import androidx.compose.ui.unit.dp
         items(state.adminUsers, key = { it.id }) { user ->
             ManagedUserRow(user, user.id == state.accountId, enabled,
                 changeEnabled = { if (user.disabled) vm.updateUser(user, disabled = false) else disable = user },
-                resetPassword = { reset = user }, revoke = { revoke = user },
+                resetPassword = { vm.clearUserManagementMessage(); reset = user }, revoke = { revoke = user },
                 canDelete = state.userDeletionAvailable && user.id != "owner" && user.role != "admin",
                 delete = { delete = user })
         }
         if (state.adminUsers.isEmpty() && !state.usersLoading) item { Text("No users loaded. Refresh to try again.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
-    if (create) UserPasswordDialog(null, state.userMutationPending, { create = false }, { username, password ->
-        vm.createUser(username, password); create = false
+    if (create) UserPasswordDialog(null, state.userMutationPending, state.userManagementMessage, { create = false }, { username, password ->
+        vm.createUser(username, password) { create = false }
     })
-    reset?.let { user -> UserPasswordDialog(user, state.userMutationPending, { reset = null }, { _, password ->
-        vm.updateUser(user, password = password); reset = null
+    reset?.let { user -> UserPasswordDialog(user, state.userMutationPending, state.userManagementMessage, { reset = null }, { _, password ->
+        vm.updateUser(user, password = password) { reset = null }
     }) }
     disable?.let { user -> AlertDialog(onDismissRequest = { disable = null },
         title = { Text("Disable ${user.username}?") }, text = { Text("They will be signed out and cannot sign in until you enable their account again. Their chats and projects are retained.") },
@@ -181,24 +181,31 @@ import androidx.compose.ui.unit.dp
     }
 }
 
-@Composable private fun UserPasswordDialog(user: ManagedUser?, busy: Boolean, dismiss: () -> Unit, submit: (String, String) -> Unit) {
+@Composable private fun UserPasswordDialog(user: ManagedUser?, busy: Boolean, error: String, dismiss: () -> Unit, submit: (String, String) -> Unit) {
     var username by rememberSaveable(user?.id) { mutableStateOf(user?.username.orEmpty()) }
     var password by remember(user?.id) { mutableStateOf("") }
     var confirmation by remember(user?.id) { mutableStateOf("") }
-    AlertDialog(onDismissRequest = dismiss, title = { Text(if (user == null) "Create user" else "Reset password for ${user.username}") },
+    AlertDialog(onDismissRequest = { if (!busy) dismiss() }, modifier = Modifier.testTag("user-password-dialog"),
+        title = { Text(if (user == null) "Create user" else "Reset password for ${user.username}") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (user == null) OutlinedTextField(username, { username = it }, label = { Text("Username") }, singleLine = true, enabled = !busy,
+                if (user == null) OutlinedTextField(username, { username = it }, Modifier.testTag("managed-username"), label = { Text("Username") }, singleLine = true, enabled = !busy,
                     supportingText = { Text("Letters, numbers, dots, underscores or hyphens") })
-                OutlinedTextField(password, { password = it }, label = { Text("New password") }, singleLine = true, enabled = !busy,
+                OutlinedTextField(password, { password = it }, Modifier.testTag("managed-password"), label = { Text("New password") }, singleLine = true, enabled = !busy,
                     visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     supportingText = { Text("At least 12 characters") })
-                OutlinedTextField(confirmation, { confirmation = it }, label = { Text("Confirm password") }, singleLine = true, enabled = !busy,
+                OutlinedTextField(confirmation, { confirmation = it }, Modifier.testTag("managed-confirm-password"), label = { Text("Confirm password") }, singleLine = true, enabled = !busy,
                     visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     isError = confirmation.isNotEmpty() && password != confirmation)
                 if (user != null) Text("Existing sessions will be signed out. Give the new password to this user privately.", style = MaterialTheme.typography.bodySmall)
+                if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("user-password-error"))
+                if (busy) Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp)); Text(if (user == null) "Creating user…" else "Resetting password…")
+                }
             }
-        }, confirmButton = { TextButton(onClick = { submit(username, password) }, enabled = !busy && validSignup(username, password, confirmation)) {
+        }, confirmButton = { TextButton(onClick = { submit(username, password) }, enabled = !busy && validSignup(username, password, confirmation),
+            modifier = Modifier.testTag("submit-managed-user")) {
             Text(if (user == null) "Create user" else "Reset password")
         } }, dismissButton = { TextButton(onClick = dismiss, enabled = !busy) { Text("Cancel") } })
 }

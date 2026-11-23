@@ -1,6 +1,6 @@
 # In-app APK updates
 
-The live release and debug feeds advertise **0.9.2 / code 36**. Open **Settings → App updates → Check for updates**, then **Download** and **Install update**. This adds [administrator user deletion](multi-user-android.md) and retains [project-based chat navigation](project-chat-navigation.md). Its signing key matches 0.8.0, 0.9.0 and 0.9.1, so those installations can update in place and retain local data.
+The live release and debug feeds advertise **0.9.3 / code 37**. Open **Settings → App updates → Check for updates**, then **Download** and **Install update**. This fixes [account creation feedback](user-creation-verification.md), includes [administrator user deletion](multi-user-android.md), and retains [project-based chat navigation](project-chat-navigation.md). Its signing key matches 0.8.0, 0.9.0, 0.9.1 and 0.9.2, so those installations can update in place and retain local data.
 
 The older 0.7.24 APK uses a different signing key and cannot update in place to 0.8.0 or later. That installation needs a one-time reinstall; save device-local drafts, pins and queues before removing it. Server chat history stays on the deployment host. The app verifies signing identity before offering installation.
 
@@ -28,7 +28,7 @@ To stage already-built APKs locally, run in Bash:
 
 ```bash
 source scripts/local-env.sh
-node scripts/publish-app-update.mjs docs/release-notes/0.9.2.txt
+node scripts/publish-app-update.mjs docs/release-notes/0.9.3.txt
 ```
 
 Then publish those staged files to the production updater:
