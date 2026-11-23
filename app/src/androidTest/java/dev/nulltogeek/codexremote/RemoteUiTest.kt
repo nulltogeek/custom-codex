@@ -226,7 +226,7 @@ class RemoteUiTest {
         val density = compose.activity.resources.displayMetrics.density
         val height = compose.onNodeWithTag("chat-composer").fetchSemanticsNode().boundsInRoot.height / density
         assertTrue("Empty composer occupies $height dp", height <= 128f)
-        compose.onNodeWithText("Codex").assertIsDisplayed()
+        compose.onNodeWithTag("composer-mode").assertIsDisplayed()
         compose.onNodeWithTag("chat-settings").assertIsDisplayed().performClick()
         compose.onNodeWithText("Mode").assertIsDisplayed()
         compose.onNodeWithText("Conversation").assertIsDisplayed()

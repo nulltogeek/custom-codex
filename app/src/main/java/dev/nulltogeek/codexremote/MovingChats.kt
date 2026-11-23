@@ -32,11 +32,16 @@ internal fun inventoryWithChatProject(raw: JsonObject, chatId: String, projectId
     ("assignments" to JsonObject(raw.obj("assignments") + (chatId to JsonPrimitive(projectId)))))
 
 @Composable internal fun ChatOptionsMenu(chat: Chat, renameEnabled: Boolean, moveEnabled: Boolean, rename: () -> Unit, move: () -> Unit,
-    archiveEnabled: Boolean, archive: () -> Unit) {
+    archiveEnabled: Boolean, archive: () -> Unit, modifier: Modifier = Modifier, pinned: Boolean = false, pin: (() -> Unit)? = null,
+    fork: (() -> Unit)? = null, forkEnabled: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
-    Box {
+    Box(modifier) {
         IconButton(onClick = { expanded = true }) { Icon(Icons.Outlined.MoreVert, "Options for chat ${chat.title}", Modifier.size(20.dp)) }
         DropdownMenu(expanded, { expanded = false }) {
+            if (pin != null) DropdownMenuItem(text = { Text(if (pinned) "Unpin chat" else "Pin chat") },
+                leadingIcon = { Icon(Icons.Outlined.PushPin, null) }, onClick = { expanded = false; pin() })
+            if (fork != null) DropdownMenuItem(text = { Text("Continue in new chat") }, leadingIcon = { Icon(Icons.Outlined.ForkRight, null) },
+                enabled = forkEnabled, onClick = { expanded = false; fork() })
             DropdownMenuItem(text = { Text("Rename chat") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) },
                 onClick = { expanded = false; rename() }, enabled = renameEnabled)
             DropdownMenuItem(text = { Text("Move to project") }, leadingIcon = { Icon(Icons.Outlined.FolderOpen, null) },

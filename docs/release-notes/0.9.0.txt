@@ -1,0 +1,7 @@
+Phase 1: a desktop-style Codex workspace on Android.
+Persistent, collapsible sidebar on tablets and wider windows; slide-out navigation on phones.
+Pinned chats, project search, clearer conversation titles, and quick chat actions.
+Continue an idle conversation in a new chat with its history and draft, without sending automatically.
+A redesigned multiline composer with Chat/Codex mode, model settings, attachments, follow-ups, and Stop.
+New-chat starter cards fill your draft so you can review it before sending.
+This release retains the 0.8.0 signing key. Users of the older 0.7.24 signing key need a manual reinstall.

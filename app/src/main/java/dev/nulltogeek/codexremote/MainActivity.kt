@@ -179,19 +179,33 @@ private val LightColors = lightColorScheme(
     LaunchedEffect(drawer.currentValue) {
         if (state.signedIn && drawer.currentValue == DrawerValue.Closed) dismissKeyboard()
     }
-    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = state.signedIn,
+    var sidebarVisible by rememberSaveable { mutableStateOf(true) }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+    val wide = state.signedIn && maxWidth >= 840.dp
+    Row(Modifier.fillMaxSize()) {
+    if (wide && sidebarVisible) RemoteDrawer(state, vm,
+        navigate = { vm.page(it) }, newChat = { vm.newChat(state.projects.find { it.id == state.projectFilter }) },
+        openChat = vm::open, openProject = { vm.filterProject(it.id) }, close = { sidebarVisible = false },
+        persistent = true, archive = { confirmArchive = it })
+    Box(Modifier.weight(1f)) {
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = state.signedIn && !wide,
         drawerContent = {
-            if (state.signedIn) RemoteDrawer(state, vm,
+            if (state.signedIn && !wide) RemoteDrawer(state, vm,
                 navigate = { page -> closeDrawer { vm.page(page) } },
                 newChat = { closeDrawer { vm.newChat(state.projects.find { it.id == state.projectFilter }) } },
                 openChat = { chat -> closeDrawer { vm.open(chat) } },
                 openProject = { project -> closeDrawer { vm.filterProject(project.id) } },
-                close = { closeDrawer() })
+                close = { closeDrawer() }, archive = { confirmArchive = it })
         }) {
     Scaffold(containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             if (state.signedIn) TopAppBar(expandedHeight = 56.dp, title = {
-                if (state.selectedChat != null && state.diff == null) ComposerOptions(state, vm, compact = true)
+                if (state.selectedChat != null && state.diff == null) Column {
+                    Text(state.selectedChat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+                    val project = state.projects.find { chatBelongsToProject(state.selectedChat, it, state.assignments) }
+                    Text(project?.name ?: if (state.chatMode == "chat") "Conversation" else "Codex", maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 else Text(when {
                     state.diff != null -> "Changed code"
                     state.page == "projects" -> "Projects"
@@ -201,10 +215,10 @@ private val LightColors = lightColorScheme(
                     else -> "Codex"
                 }, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
             }, navigationIcon = {
-                IconButton(onClick = { if (state.diff != null) vm.showDiff(null) else { dismissKeyboard(); scope.launch { drawer.open() } } },
+                IconButton(onClick = { if (state.diff != null) vm.showDiff(null) else if (wide) { sidebarVisible = !sidebarVisible } else { dismissKeyboard(); scope.launch { drawer.open() } } },
                     modifier = Modifier.testTag("open-navigation")) {
                     if (state.diff != null) Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", Modifier.size(24.dp))
-                    else Box(Modifier.semantics { contentDescription = "Open navigation" }) { NavigationGlyph() }
+                    else NavigationGlyph()
                 }
             }, actions = {
                 IconButton(onClick = { vm.newChat(state.projects.find { it.id == state.projectFilter }) },
@@ -212,7 +226,9 @@ private val LightColors = lightColorScheme(
                     modifier = Modifier.testTag("header-new-chat")) { Icon(Icons.Outlined.Edit, "Start new chat", Modifier.size(23.dp)) }
                 state.selectedChat?.let { chat ->
                     ChatOptionsMenu(chat, canRename(state), canMoveChat(state), { vm.beginRename(chat) }, { vm.beginMoveChat(chat) },
-                        canArchive(state, chat), { confirmArchive = chat })
+                        canArchive(state, chat), { confirmArchive = chat },
+                        pinned = state.favoriteChats.any { it.id == chat.id }, pin = { vm.favorite(chat) },
+                        fork = vm::forkChat, forkEnabled = canForkChat(state), modifier = Modifier.testTag("conversation-options"))
                     if (chat.archived) IconButton(onClick = { confirmDelete = chat }, enabled = canDeleteChat(state, chat)) { Icon(Icons.Outlined.DeleteOutline, "Delete chat") }
                 }
                 if (state.selectedChat == null) IconButton(onClick = { vm.refresh() }, enabled = canRefreshHistory(state)) { Icon(Icons.Outlined.Refresh, "Refresh history") }
@@ -232,7 +248,9 @@ private val LightColors = lightColorScheme(
             Crossfade(screenKey, Modifier.weight(1f), animationSpec = tween(if (state.motion) 160 else 0), label = "Screen transition") { screen -> when {
                 screen == "login" -> AccountSignIn(state, vm)
                 screen == "diff" && state.diff != null -> DiffScreen(state.diff)
-                screen.startsWith("chat:") && state.selectedChat != null -> key(state.selectedChat.id) { Conversation(state, vm, approval = { approvalId = it.id }, answerQuestion = { asyncQuestion = it.id }) }
+                screen.startsWith("chat:") && state.selectedChat != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    key(state.selectedChat.id) { Conversation(state, vm, approval = { approvalId = it.id }, answerQuestion = { asyncQuestion = it.id }) }
+                }
                 screen == "projects" -> ProjectScreen(state, vm)
                 screen == "settings" -> SettingsScreen(state, vm)
                 screen == "users" && state.userManagementAvailable -> ManageUsersScreen(state, vm)
@@ -240,6 +258,9 @@ private val LightColors = lightColorScheme(
                 else -> ChatsScreen(state, vm, approval = { approvalId = it.id }, archive = { confirmArchive = it }, delete = { confirmDelete = it })
             } }
         }
+    }
+    }
+    }
     }
     }
     if (pending?.method == "item/tool/requestUserInput") QuestionDialog(pending.id, pending.questions(),
@@ -336,8 +357,8 @@ private val LightColors = lightColorScheme(
                     }
                 }
                 item { CompactSearch(query, vm::search, if (archivedOnly) "Search archived chats" else "Search all chats") }
-                if (!archivedOnly) item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(0 to "Recent", 3 to "Favorites", 2 to "Agent chats").forEach { (i, label) -> FilterChip(selected = tab == i, onClick = { selectedTab = i }, label = { Text(label) }) } } }
-                if (list.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (archivedOnly) "No archived chats" else if (tab == 3) "No favorite chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (archivedOnly) "Chats you archive appear here. Open one to read or restore it." else if (tab == 3) "Tap a chat's star to keep it here." else "Choose a project or start a conversation.") }
+                if (!archivedOnly) item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(0 to "Recent", 3 to "Pinned", 2 to "Agent chats").forEach { (i, label) -> FilterChip(selected = tab == i, onClick = { selectedTab = i }, label = { Text(label) }) } } }
+                if (list.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (archivedOnly) "No archived chats" else if (tab == 3) "No pinned chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (archivedOnly) "Chats you archive appear here. Open one to read or restore it." else if (tab == 3) "Pin a chat to keep it close at hand." else "Choose a project or start a conversation.") }
                 items(list, key = { it.id }, contentType = { "chat" }) { chat ->
                     val p = state.projects.find { chatBelongsToProject(chat, it, state.assignments) }
                     SwipeDeleteRow(chat, !selecting && canDeleteChat(state, chat), delete = { delete(chat) }) {
@@ -411,7 +432,10 @@ private val LightColors = lightColorScheme(
     rename: (Project) -> Unit = { vm.beginRename(it) }, newProject: () -> Unit = { vm.beginNewProject() }) {
     var folders by remember { mutableStateOf<Project?>(null) }
     var favoritesOnly by rememberSaveable { mutableStateOf(false) }
-    val projects = if (favoritesOnly) state.projects.filter { it.id in state.favoriteProjectIds } else state.projects
+    var projectQuery by rememberSaveable(state.endpoint, state.username) { mutableStateOf("") }
+    val projects = state.projects.filter { (!favoritesOnly || it.id in state.favoriteProjectIds) &&
+        (projectQuery.isBlank() || it.name.contains(projectQuery, true) || it.roots.any { root -> root.contains(projectQuery, true) }) }
+        .sortedByDescending { it.id in state.favoriteProjectIds }
     RefreshableLibrary(state, refresh) {
         LazyColumn(Modifier.fillMaxSize().testTag("project-list"), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             item {
@@ -425,6 +449,7 @@ private val LightColors = lightColorScheme(
                     FilledTonalIconButton(onClick = newProject, enabled = canCreateProject(state), modifier = Modifier.testTag("new-project")) { Icon(Icons.Outlined.Add, "New project") }
                 }
             }
+            item { CompactSearch(projectQuery, { projectQuery = it }, "Search projects") }
             item { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(!favoritesOnly, { favoritesOnly = false }, label = { Text("All projects") })
                 FilterChip(favoritesOnly, { favoritesOnly = true }, label = { Text("Favorites") })
@@ -448,7 +473,7 @@ private val LightColors = lightColorScheme(
                     }
                 }
             }
-            if (projects.isEmpty()) item { EmptyState(if (favoritesOnly) "No favorite projects yet" else "No projects loaded", if (favoritesOnly) "Tap a project's star to keep it here." else "Connect to your computer and refresh its project inventory.") }
+            if (projects.isEmpty()) item { EmptyState(if (projectQuery.isNotBlank()) "No matching projects" else if (favoritesOnly) "No favorite projects yet" else "No projects loaded", if (favoritesOnly) "Tap a project's star to keep it here." else "Connect to your computer and refresh its project inventory.") }
         }
     }
     folders?.let { project -> AlertDialog(onDismissRequest = { folders = null }, title = { Text(project.name) },
@@ -460,7 +485,7 @@ private val LightColors = lightColorScheme(
 
 @Composable private fun Conversation(state: ScreenState, vm: RemoteViewModel, approval: (PendingInput) -> Unit, answerQuestion: (TimelineItem) -> Unit) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) vm.attach(uris) }
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxHeight().widthIn(max = 860.dp).fillMaxWidth()) {
         if (state.selectedChat?.status == "active" || state.selectedChat?.archived == true || state.pending.any { it.params.text("threadId") == state.selectedChat?.id } || state.lastTurnStatus in listOf("failed", "interrupted")) Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             val active = state.selectedChat?.status == "active"
             CommandActivity(state)
@@ -481,7 +506,7 @@ private val LightColors = lightColorScheme(
                 }
             }
         }
-        ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval, loadImage = vm::attachmentImage, answerQuestion = answerQuestion, editMessage = vm::editSentMessage)
+        ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval, loadImage = vm::attachmentImage, answerQuestion = answerQuestion, editMessage = vm::editSentMessage, chooseStarter = vm::draft)
         ChatComposer(state, vm, onPick = { picker.launch(it) })
     }
     state.sentMessageEdit?.let { edit -> SentMessageEditDialog(edit.copy(error = edit.error ?: state.notice), state.connection == "Connected",
@@ -491,7 +516,7 @@ private val LightColors = lightColorScheme(
 
 @Composable internal fun ChatTimeline(state: ScreenState, modifier: Modifier = Modifier, loadOlder: () -> Unit, showDiff: (Change) -> Unit, approval: (PendingInput) -> Unit,
     loadImage: suspend (String) -> ByteArray = { error("Image unavailable") }, answerQuestion: (TimelineItem) -> Unit = {},
-    editMessage: ((TimelineItem) -> Unit)? = null) {
+    editMessage: ((TimelineItem) -> Unit)? = null, chooseStarter: (String) -> Unit = {}) {
     val listState = remember(state.selectedChat?.id) { LazyListState() }
     val followTail by remember(listState) { derivedStateOf { !listState.canScrollBackward } }
     val scope = rememberCoroutineScope()
@@ -518,7 +543,7 @@ private val LightColors = lightColorScheme(
             }
         }
     Box(Modifier.weight(1f).fillMaxWidth()) {
-        LazyColumn(Modifier.fillMaxSize().testTag("history-list"), state = listState, reverseLayout = true, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        LazyColumn(Modifier.fillMaxSize().testTag("history-list"), state = listState, reverseLayout = true, contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
             items(messages.asReversed(), key = { it.id }, contentType = { it.type }) { item ->
                 MessageItem(item, showDiff, loadImage, answerQuestion, item.id in state.answeredInputs || questionAnswered(item, state.timeline),
                     editMessage = editMessage, canEdit = !state.sending && !state.loading && !state.uploading && !state.uncertainSend && state.selectedChat?.archived != true,
@@ -532,7 +557,7 @@ private val LightColors = lightColorScheme(
                 }
             }
             else if (state.timeline.isEmpty() && !state.historyAvailable && state.selectedChat?.preview?.isNotBlank() == true) item { EmptyState("Earlier messages unavailable", "New messages will appear here. You can continue this conversation.") }
-            else if (state.timeline.isEmpty()) item { NewConversationGreeting(state.chatMode) }
+            else if (state.timeline.isEmpty()) item { NewConversationGreeting(state.chatMode, chooseStarter) }
             if (hasOlder) item(key = "history-footer") {
                 PageLoader(state.olderLoading, state.olderError, "Earlier messages load as you scroll", state.hiddenOlderCount > 0 || state.connection == "Connected") { loadOlder() }
             }

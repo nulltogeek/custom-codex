@@ -94,12 +94,12 @@ class LibraryUiTest {
         render { ChatsScreen(state.value, vm, approval = {}, favorite = { chat ->
             state.value = state.value.copy(favoriteChats = state.value.favoriteChats.filter { it.id != chat.id })
         }) }
-        compose.onNodeWithText("Favorites").performScrollTo().performClick()
+        compose.onNodeWithText("Pinned").performScrollTo().performClick()
         compose.onNodeWithText("Saved older chat").assertIsDisplayed()
         compose.onNodeWithText("Recent chat").assertDoesNotExist()
         screenshot("v0.7.0-chat-favorites")
         compose.onNodeWithContentDescription("Remove chat Saved older chat from favorites").performClick()
-        compose.onNodeWithText("No favorite chats yet").assertIsDisplayed()
+        compose.onNodeWithText("No pinned chats yet").assertIsDisplayed()
     }
 
     @Test fun archivedSectionFiltersProjectsAndIncludesArchivedAgents() {

@@ -13,6 +13,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,44 +37,58 @@ import kotlinx.coroutines.withContext
 
 @Composable fun ChatComposer(state: ScreenState, vm: RemoteViewModel, onPick: (Array<String>) -> Unit) {
     var attachmentMenu by remember { mutableStateOf(false) }
+    var modeMenu by remember { mutableStateOf(false) }
     val canAttach = state.connection == "Connected" && !state.uploading && !state.sending && state.selectedChat?.archived != true
     val canSend = (state.draft.isNotBlank() || state.attachments.isNotEmpty()) && state.attachments.all { it.readyToSend } && canAttach && !state.uncertainSend
-    val queueMessage = state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty() || state.queuedMessages.any { it.chatId == state.selectedChat?.id }
-    Surface(color = MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 12.dp, vertical = 8.dp).testTag("chat-composer"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            MessageQueueView(state, edit = { message, text, attachments -> vm.editQueued(message.id, text, attachments) },
-                move = vm::moveQueued, remove = vm::removeQueued, pause = vm::pauseQueue, resume = vm::resumeQueue, retry = vm::retryQueued)
-            if (state.attachments.isNotEmpty()) {
-                Text(attachmentSummary(state.attachments), style = MaterialTheme.typography.labelSmall,
-                    color = if (state.attachments.any { it.uploadError.isNotEmpty() }) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
-                LazyRow(Modifier.fillMaxWidth().heightIn(min = 88.dp).testTag("attachment-strip"), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(state.attachments, key = { it.id }) { file ->
-                        AttachmentTile(file, !state.sending) { vm.removeAttachment(file.id) }
+    val running = state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty()
+    val queueMessage = running || state.queuedMessages.any { it.chatId == state.selectedChat?.id }
+    Column(Modifier.fillMaxWidth().imePadding().padding(horizontal = 16.dp, vertical = 12.dp).testTag("chat-composer"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        MessageQueueView(state, edit = { message, text, attachments -> vm.editQueued(message.id, text, attachments) },
+            move = vm::moveQueued, remove = vm::removeQueued, pause = vm::pauseQueue, resume = vm::resumeQueue, retry = vm::retryQueued)
+        if (state.uncertainSend) TextButton(onClick = { vm.refresh() }) { Text("Refresh and check delivery") }
+        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(24.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+            Column(Modifier.fillMaxWidth().padding(8.dp)) {
+                if (state.attachments.isNotEmpty()) {
+                    Text(attachmentSummary(state.attachments), Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall,
+                        color = if (state.attachments.any { it.uploadError.isNotEmpty() }) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    LazyRow(Modifier.fillMaxWidth().heightIn(min = 88.dp).testTag("attachment-strip"), contentPadding = PaddingValues(4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(state.attachments, key = { it.id }) { file -> AttachmentTile(file, !state.sending) { vm.removeAttachment(file.id) } }
                     }
                 }
-            }
-            if (state.uncertainSend) TextButton(onClick = { vm.refresh() }) { Text("Refresh and check delivery") }
-            Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(28.dp)) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.Bottom) {
+                MessageDraftInput(state.draft, vm::draft, vm::send, canSend,
+                    if (queueMessage) "Add a follow-up…" else if (state.chatMode == "chat") "Ask anything…" else "Describe a task…",
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Box {
-                        IconButton(onClick = { attachmentMenu = true }, enabled = canAttach) { Icon(Icons.Outlined.Add, "Attach file or image", Modifier.size(25.dp)) }
+                        IconButton(onClick = { attachmentMenu = true }, enabled = canAttach, modifier = Modifier.testTag("composer-attach")) {
+                            Icon(Icons.Outlined.Add, "Attach file or image", Modifier.size(23.dp))
+                        }
                         DropdownMenu(attachmentMenu, { attachmentMenu = false }) {
                             DropdownMenuItem(text = { Text("Photo or image") }, leadingIcon = { Icon(Icons.Outlined.Image, null) }, onClick = { attachmentMenu = false; onPick(arrayOf("image/*")) })
-                            DropdownMenuItem(text = { Text("File") }, leadingIcon = { Icon(Icons.Outlined.InsertDriveFile, null) }, onClick = { attachmentMenu = false; onPick(arrayOf("*/*")) })
+                            DropdownMenuItem(text = { Text("File") }, leadingIcon = { Icon(Icons.AutoMirrored.Outlined.InsertDriveFile, null) }, onClick = { attachmentMenu = false; onPick(arrayOf("*/*")) })
                         }
                     }
-                    MessageDraftInput(state.draft, vm::draft, vm::send, canSend,
-                        if (queueMessage) "Queue the next message…" else if (state.chatMode == "chat") "Ask a question…" else "Message Codex…",
-                        Modifier.weight(1f))
-                    if (state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty()) IconButton(
-                        onClick = { vm.interrupt() }, enabled = state.connection == "Connected" && !state.loading,
-                        modifier = Modifier.size(48.dp).testTag("stop-work")
-                    ) { Icon(Icons.Outlined.StopCircle, "Stop", Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurface) }
-                    Box(Modifier.size(48.dp).testTag("send-message"), contentAlignment = Alignment.Center) {
-                        FilledIconButton(onClick = { vm.send() },
-                            enabled = canSend,
-                            modifier = Modifier.size(36.dp), shape = CircleShape) {
-                            if (state.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.ArrowUpward, if (queueMessage) "Queue message" else "Send", Modifier.size(23.dp))
+                    Box {
+                        TextButton(onClick = { modeMenu = true }, enabled = !running && !state.sending, contentPadding = PaddingValues(horizontal = 8.dp),
+                            modifier = Modifier.testTag("composer-mode"), colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) {
+                            Text(if (state.chatMode == "chat") "Chat" else "Codex", style = MaterialTheme.typography.labelMedium)
+                            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(15.dp))
+                        }
+                        DropdownMenu(modeMenu, { modeMenu = false }) {
+                            DropdownMenuItem(text = { Column { Text("Chat"); Text("Ask questions and explore ideas", style = MaterialTheme.typography.labelSmall) } },
+                                leadingIcon = { Icon(Icons.Outlined.ChatBubbleOutline, null) }, onClick = { vm.chatMode("chat"); modeMenu = false })
+                            DropdownMenuItem(text = { Column { Text("Codex"); Text("Work on files and projects", style = MaterialTheme.typography.labelSmall) } },
+                                leadingIcon = { Icon(Icons.Outlined.Code, null) }, onClick = { vm.chatMode("codex"); modeMenu = false })
+                        }
+                    }
+                    Box(Modifier.weight(1f)) { ComposerOptions(state, vm, compact = true) }
+                    if (running) IconButton(onClick = { vm.interrupt() }, enabled = state.connection == "Connected" && !state.loading,
+                        modifier = Modifier.size(44.dp).testTag("stop-work")) { Icon(Icons.Outlined.StopCircle, "Stop", Modifier.size(25.dp)) }
+                    Box(Modifier.size(44.dp).testTag("send-message"), contentAlignment = Alignment.Center) {
+                        FilledIconButton(onClick = { vm.send() }, enabled = canSend, modifier = Modifier.size(36.dp), shape = CircleShape) {
+                            if (state.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Icon(Icons.Outlined.ArrowUpward, if (queueMessage) "Queue message" else "Send", Modifier.size(22.dp))
                         }
                     }
                 }
@@ -127,7 +142,7 @@ internal fun insertDraftLineBreak(value: TextFieldValue): TextFieldValue {
             val preview = bitmap
             if (preview != null) Image(preview.asImageBitmap(), "Preview of ${file.name}",
                 Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)).clickable(onClickLabel = "Open image ${file.name}") { showPreview = true }, contentScale = ContentScale.Crop)
-            else Icon(if (file.mimeType.startsWith("image/")) Icons.Outlined.Image else Icons.Outlined.InsertDriveFile, null, Modifier.size(40.dp))
+            else Icon(if (file.mimeType.startsWith("image/")) Icons.Outlined.Image else Icons.AutoMirrored.Outlined.InsertDriveFile, null, Modifier.size(40.dp))
             Spacer(Modifier.width(6.dp))
             Column(Modifier.weight(1f)) {
                 Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)

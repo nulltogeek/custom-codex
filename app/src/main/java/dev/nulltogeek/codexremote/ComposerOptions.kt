@@ -29,8 +29,9 @@ private val AccessDetails = mapOf("host" to "Keep this chat’s host policy", "a
         contentDescription = "Chat settings, mode: ${state.chatMode}, model: ${state.selectedModel.ifEmpty { "host default" }}, access: $accessLabel, reasoning: ${state.selectedEffort.ifEmpty { "model default" }}"
     }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface), contentPadding = PaddingValues(horizontal = if (compact) 0.dp else 6.dp)) {
         if (compact) {
-            Text("Codex", style = MaterialTheme.typography.titleLarge, maxLines = 1)
-            Icon(Icons.Outlined.ExpandMore, null, Modifier.padding(start = 4.dp).size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(state.models.find { it.id == state.selectedModel }?.name ?: "Default model", modifier = Modifier.weight(1f, fill = false),
+                style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Icon(Icons.Outlined.ExpandMore, null, Modifier.padding(start = 3.dp).size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             Icon(Icons.Outlined.Tune, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
             Text(if (state.chatMode == "chat") "Conversation" else "Codex", style = MaterialTheme.typography.labelMedium)

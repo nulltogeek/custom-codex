@@ -1028,10 +1028,12 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             if (cause is SessionExpiredException) clearSession(cause.message)
         })
     }
-    fun continueInNewChat() {
+    fun continueInNewChat() = copyChat(requireWriterConflict = true)
+    fun forkChat() = copyChat(requireWriterConflict = false)
+    private fun copyChat(requireWriterConflict: Boolean) {
         val source = mutable.value
         val original = source.selectedChat ?: return
-        if (!source.writerConflict || source.sending || source.uploading || source.uncertainSend ||
+        if ((requireWriterConflict && !source.writerConflict) || (!requireWriterConflict && !canForkChat(source)) || source.sending || source.uploading || source.uncertainSend ||
             source.connection != "Connected" || original.archived) return
         mutable.update { it.copy(sending = true, notice = null) }
         accountScope.launch(Dispatchers.IO) {
