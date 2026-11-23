@@ -1,6 +1,6 @@
 # In-app APK updates
 
-The live release and debug feeds advertise **0.10.0 / code 39**. Open **Settings → App updates → Check for updates**, then **Download** and **Install update**. This adds [project files and an editor](project-files.md), retains [safe recreation of deleted usernames](username-reuse-verification.md), fixes [account creation feedback](user-creation-verification.md), includes [administrator user deletion](multi-user-android.md), and retains [project-based chat navigation](project-chat-navigation.md). Its signing key matches 0.8.0, 0.9.0, 0.9.1, 0.9.2, 0.9.3 and 0.9.4, so those installations can update in place and retain local data.
+The live release and debug feeds advertise **0.10.1 / code 40**. Open **Settings → App updates → Check for updates**, then **Download** and **Install update**. This adds [chat output previews and faster controls](chat-outputs-and-controls.md), retains [project files and an editor](project-files.md), retains [safe recreation of deleted usernames](username-reuse-verification.md), fixes [account creation feedback](user-creation-verification.md), includes [administrator user deletion](multi-user-android.md), and retains [project-based chat navigation](project-chat-navigation.md). Its signing key matches 0.8.0, 0.9.0, 0.9.1, 0.9.2, 0.9.3, 0.9.4 and 0.10.0, so those installations can update in place and retain local data.
 
 The older 0.7.24 APK uses a different signing key and cannot update in place to 0.8.0 or later. That installation needs a one-time reinstall; save device-local drafts, pins and queues before removing it. Server chat history stays on the deployment host. The app verifies signing identity before offering installation.
 
@@ -10,7 +10,7 @@ The older 0.7.24 APK uses a different signing key and cannot update in place to 
 2. Review the version, release notes and download size, then tap **Download**. Keep the app open while downloading. A failed download can be retried; an incomplete file is never offered to the installer.
 3. Tap **Install update** after verification. Android may ask you to allow Codex Remote to install apps; enable that permission and return. Then confirm the update in Android's installer. Updates with the same application ID and signing key retain your app data. Checking alone does not download or install an APK.
 
-The app checks SHA-256, size, package name, version, minimum Android version and the installed signing certificates. It verifies the cached file again before opening the installer. The non-exported FileProvider shares only the update-cache directory through a temporary read grant. Installation stays under Android's normal user confirmation.
+The app checks SHA-256, size, package name, version, minimum Android version and the installed signing certificates. It verifies the cached file again before opening the installer. The non-exported FileProvider shares update APKs and chat output files from dedicated cache directories through a temporary read grant. Installation stays under Android's normal user confirmation.
 
 Downloads use the existing authenticated HTTPS/WireGuard connection. The current client allows 15 minutes per download and times out a stalled read after 30 seconds. Session credentials stay in request headers, and APK downloads reject redirects. Release and debug APKs use separate update channels and application IDs. Check/download errors are shown in the update section without interrupting a chat. APK availability is independent of model-provider authentication.
 
@@ -28,7 +28,7 @@ To stage already-built APKs locally, run in Bash:
 
 ```bash
 source scripts/local-env.sh
-node scripts/publish-app-update.mjs docs/release-notes/0.10.0.txt
+node scripts/publish-app-update.mjs docs/release-notes/0.10.1.txt
 ```
 
 Then publish those staged files to the production updater:

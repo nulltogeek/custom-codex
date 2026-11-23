@@ -5,6 +5,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.*
@@ -25,6 +27,7 @@ data class LoginSession(val token: String, val username: String, val expiresAt: 
 class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requestTimeoutMillis: Long = 30000) {
     private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS).build()
+    private val chatDownloads = Semaphore(2)
     private val ids = AtomicLong()
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
     val events = Channel<JsonObject>(1024)
@@ -208,6 +211,39 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
                 }
             })
         }
+    }
+    suspend fun downloadChatArtifact(threadId: String, item: TimelineItem, artifact: ChatArtifact): ByteArray = chatDownloads.withPermit { withContext(Dispatchers.IO) {
+        val source = artifact.source
+        if (source.startsWith("data:image/")) return@withContext downloadAttachmentImage(source)
+        val publicImage = source.startsWith("https://") || source.startsWith("http://")
+        val builder = if (publicImage) {
+            require(artifact.image && source.startsWith("https://")) { "Only HTTPS image links can be previewed." }
+            Request.Builder().url(source)
+        } else Request.Builder().url(endpoint + "/v1/chat-file").header("Authorization", "Bearer $token").post(
+            jsonObject("threadId" to threadId, "itemId" to item.id, "turnId" to item.turnId, "source" to source)
+                .toString().toRequestBody("application/json".toMediaType()))
+        // Public image hosts never receive the private server's session or redirect requests.
+        http.newBuilder().followRedirects(false).followSslRedirects(false).build().newCall(builder.build()).awaitParsed {
+            if (!publicImage && it.code == 401) throw SessionExpiredException()
+            if (!it.isSuccessful) throw IOException(when(it.code) {
+                403 -> "This output is outside your workspace or is no longer attached to this reply."
+                404 -> "This output is no longer available on the server. Ask Codex to recreate it."
+                413 -> "Chat downloads support files up to 8 MB."
+                else -> "Could not load this output (HTTP ${it.code}). Tap Retry."
+            })
+            val body = it.body ?: throw IOException("The server returned an empty download.")
+            require(body.contentLength() <= 8 * 1024 * 1024) { "Chat downloads support files up to 8 MB." }
+            body.byteStream().use { input ->
+                val output = java.io.ByteArrayOutputStream(); val chunk = ByteArray(32768)
+                while (true) {
+                    val count = input.read(chunk); if (count < 0) break
+                    require(output.size() + count <= 8 * 1024 * 1024) { "Chat downloads support files up to 8 MB." }
+                    output.write(chunk, 0, count)
+                }
+                output.toByteArray()
+            }
+        }
+    }
     }
     suspend fun downloadAppUpdate(update: AppUpdate, directory: File, progress: (Int) -> Unit): File = withContext(Dispatchers.IO) {
         // Keep session headers on this configured host; update metadata cannot redirect downloads.

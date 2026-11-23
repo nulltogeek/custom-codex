@@ -125,10 +125,25 @@ def operation(request):
                 return {'entries': sorted(rows, key=lambda row: row['path']), 'truncated': truncated}
             finally:
                 os.close(directory)
-        if action not in ('read', 'write') or not values:
+        if action not in ('read', 'write', 'download') or not values:
             raise Failure(400, 'Choose a file.')
         parent = walk(root_fd, values[:-1])
         try:
+            if action == 'download':
+                fd = os.open(values[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                try:
+                    info = os.fstat(fd)
+                    if not stat.S_ISREG(info.st_mode):
+                        raise Failure(415, 'Only regular files can be downloaded.')
+                    if info.st_size > 8 * 1024 * 1024:
+                        raise Failure(413, 'Chat downloads support files up to 8 MB.')
+                    with os.fdopen(fd, 'rb', closefd=False) as stream:
+                        data = stream.read(8 * 1024 * 1024 + 1)
+                    if len(data) > 8 * 1024 * 1024:
+                        raise Failure(413, 'Chat downloads support files up to 8 MB.')
+                    return {'data': base64.b64encode(data).decode('ascii'), 'name': values[-1]}
+                finally:
+                    os.close(fd)
             data, text, info = file_bytes(parent, values[-1])
             revision = hashlib.sha256(data).hexdigest()
             if action == 'read':

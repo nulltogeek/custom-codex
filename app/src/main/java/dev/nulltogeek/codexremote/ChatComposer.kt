@@ -38,7 +38,8 @@ import kotlinx.coroutines.withContext
 @Composable fun ChatComposer(state: ScreenState, vm: RemoteViewModel, onPick: (Array<String>) -> Unit) {
     var attachmentMenu by remember { mutableStateOf(false) }
     var modeMenu by remember { mutableStateOf(false) }
-    val canAttach = state.connection == "Connected" && !state.uploading && !state.sending && state.selectedChat?.archived != true
+    val stopping = state.selectedChat?.id in state.stoppingChats
+    val canAttach = state.connection == "Connected" && !state.uploading && !state.sending && !stopping && state.selectedChat?.archived != true
     val canSend = (state.draft.isNotBlank() || state.attachments.isNotEmpty()) && state.attachments.all { it.readyToSend } && canAttach && !state.uncertainSend
     val running = state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty()
     val queueMessage = running || state.queuedMessages.any { it.chatId == state.selectedChat?.id }
@@ -83,8 +84,11 @@ import kotlinx.coroutines.withContext
                         }
                     }
                     Box(Modifier.weight(1f)) { ComposerOptions(state, vm, compact = true) }
-                    if (running) IconButton(onClick = { vm.interrupt() }, enabled = state.connection == "Connected" && !state.loading,
-                        modifier = Modifier.size(44.dp).testTag("stop-work")) { Icon(Icons.Outlined.StopCircle, "Stop", Modifier.size(25.dp)) }
+                    if (running) IconButton(onClick = { vm.interrupt() }, enabled = state.connection == "Connected" && !stopping,
+                        modifier = Modifier.size(44.dp).testTag("stop-work")) {
+                        if (stopping) CircularProgressIndicator(Modifier.size(22.dp).semantics { contentDescription = "Stopping" }, strokeWidth = 2.dp)
+                        else Icon(Icons.Outlined.StopCircle, "Stop", Modifier.size(25.dp))
+                    }
                     Box(Modifier.size(44.dp).testTag("send-message"), contentAlignment = Alignment.Center) {
                         FilledIconButton(onClick = { vm.send() }, enabled = canSend, modifier = Modifier.size(36.dp), shape = CircleShape) {
                             if (state.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)

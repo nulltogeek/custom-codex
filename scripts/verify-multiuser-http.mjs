@@ -11,19 +11,21 @@ import { WebSocket } from 'ws';
 import { startStandalone } from '../bridge/standalone.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'codex-http-stage-'));
-let providerRequests = 0, syntheticResponses = 0;
+let providerRequests = 0, syntheticResponses = 0, holdNextResponse = false, heldResponse;
+const controlTimings = {};
 const provider = createServer((req, res) => {
   providerRequests++;
   if (req.method !== 'POST') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"data":[]}'); return; }
   syntheticResponses++;
   req.resume();
   req.on('end', () => {
-    const id = 'resp_' + randomUUID(), itemId = 'msg_' + randomUUID(), text = 'Disposable staging reply.';
+    const id = 'resp_' + randomUUID(), itemId = 'msg_' + randomUUID(), text = 'Disposable staging reply. ![Preview](output.png) [Report](editor.txt)';
     const item = { id: itemId, type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text, annotations: [], logprobs: [] }] };
     const response = { id, object: 'response', created_at: Math.floor(Date.now() / 1000), model: 'gpt-5.4', status: 'in_progress', output: [] };
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' }); let sequence = 0;
     const send = (type, data) => res.write('event: ' + type + '\ndata: ' + JSON.stringify({ type, sequence_number: sequence++, ...data }) + '\n\n');
     send('response.created', { response });
+    if (holdNextResponse) { holdNextResponse = false; heldResponse = res; return; }
     send('response.output_item.added', { output_index: 0, item: { ...item, status: 'in_progress', content: [] } });
     send('response.content_part.added', { item_id: itemId, output_index: 0, content_index: 0, part: { type: 'output_text', text: '', annotations: [], logprobs: [] } });
     send('response.output_text.delta', { item_id: itemId, output_index: 0, content_index: 0, delta: text });
@@ -96,6 +98,26 @@ try {
     assert.equal(terminal.message.params.turn.status, 'completed');
   };
   await complete(alice, at.id); await complete(bob, bt.id);
+  const preflightStarted = performance.now();
+  const idle = (await alice.call('thread/read', { threadId: at.id, includeTurns: false })).thread;
+  controlTimings.metadataMs = Math.round(performance.now() - preflightStarted);
+  assert.equal(idle.status.type, 'idle');
+  holdNextResponse = true;
+  const sendStarted = performance.now();
+  const live = await alice.call('turn/start', { threadId: at.id, input: [{ type: 'text', text: 'Disposable interrupt test.' }], mobileMode: 'codex', accessMode: 'host' });
+  controlTimings.sendAckMs = Math.round(performance.now() - sendStarted);
+  const heldDeadline = Date.now() + 30000;
+  while (!heldResponse) { if (Date.now() > heldDeadline) throw Error('Held provider response did not start'); await new Promise(resolve => setTimeout(resolve, 25)); }
+  const stopStarted = performance.now();
+  await alice.call('turn/interrupt', { threadId: at.id, turnId: live.turn.id });
+  controlTimings.stopAckMs = Math.round(performance.now() - stopStarted);
+  const stopDeadline = Date.now() + 10000;
+  while (!alice.events.some(event => event.message?.method === 'turn/completed' && event.message?.params?.turn?.id === live.turn.id)) {
+    if (Date.now() > stopDeadline) throw Error('Interrupted turn did not finish'); await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  assert.equal(alice.events.find(event => event.message?.method === 'turn/completed' && event.message?.params?.turn?.id === live.turn.id).message.params.turn.status, 'interrupted');
+  heldResponse.end();
+
   await alice.call('thread/name/set', { threadId: at.id, name: 'Alice staging chat' });
   await bob.call('thread/name/set', { threadId: bt.id, name: 'Bob staging chat' });
   const created = await alice.call('project/create', { idempotencyKey: randomUUID(), name: 'Alice staging project', roots: [{ path: ah.value.capabilities.workspaceRoot }] });
@@ -104,7 +126,7 @@ try {
   await alice.call('thread/metadata/update', { threadId: at.id, projectId });
   // Internal execution prepares disposable files; phones never receive command/exec access.
   await runtime.pool.get(a.user).then(workspace => workspace.call('command/exec', { command: ['python3', '-c',
-    "from pathlib import Path; Path('editor.txt').write_text('before'); Path('large.txt').write_text('あ'*80000); Path('link').symlink_to('/etc/passwd')"],
+    "from pathlib import Path; Path('editor.txt').write_text('before'); Path('output.png').write_bytes(bytes([137,80,78,71,0,1,2,3])); Path('large.txt').write_text('あ'*80000); Path('link').symlink_to('/etc/passwd')"],
     cwd: ah.value.capabilities.workspaceRoot, sandboxPolicy: { type: 'dangerFullAccess' } }));
   assert.equal((await files('list')).value.entries.some(entry => entry.name === 'editor.txt'), true);
   const file = await files('read', 'editor.txt'); assert.equal(file.status, 200); assert.equal(file.value.content, 'before');
@@ -116,6 +138,19 @@ try {
   assert.equal((await files('read', 'editor.txt', {}, b)).status, 404);
   assert.equal((await files('read', '../account.json')).status, 400);
   assert.equal((await files('read', 'link')).status, 403);
+  assert.equal(ah.value.capabilities.chatFiles, true);
+  const history = (await alice.call('thread/read', { threadId: at.id, includeTurns: true })).thread;
+  const replyTurn = history.turns.find(turn => turn.items.some(item => item.type === 'agentMessage'));
+  const replyItem = replyTurn.items.find(item => item.type === 'agentMessage');
+  const download = (source, session = a) => fetch(base + '/v1/chat-file', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` },
+    body: JSON.stringify({ threadId: at.id, turnId: replyTurn.id, itemId: replyItem.id, source }) });
+  const picture = await download('output.png'); assert.equal(picture.status, 200);
+  assert.deepEqual(Buffer.from(await picture.arrayBuffer()), Buffer.from([137,80,78,71,0,1,2,3]));
+  const report = await download('editor.txt'); assert.equal(report.status, 200); assert.equal(await report.text(), 'Edited from the phone\nسلام');
+  assert.equal((await download('output.png', b)).status, 404);
+  assert.equal((await download('/etc/passwd')).status, 403);
+
   await alice.call('thread/metadata/update', { threadId: at.id, projectId });
   const aProjects = await http('/v1/projects', a), bProjects = await http('/v1/projects', b), aHistory = await http('/v1/history', a), bHistory = await http('/v1/history', b);
   assert.equal(aProjects.status, 200); assert.equal(bProjects.status, 200); assert.equal(aHistory.status, 200); assert.equal(bHistory.status, 200);
@@ -142,12 +177,12 @@ try {
   assert.equal((await http('/v1/admin/users', owner)).value.users.length, 4);
   assert.equal((await http('/v1/admin/users/owner', owner, 'PATCH', { disabled: true })).status, 400);
   assert.equal((await http('/v1/history', owner)).value.data.length, 0);
-  assert.equal(syntheticResponses, 2);
+  assert.equal(syntheticResponses, 3);
   console.log(JSON.stringify({ realStandaloneAndDocker: true, disposableAccountsOnly: true, signupAndLogin: true,
     hostIdentitiesAndRoles: true, adminListCreateDisableReenableResetRevokeAndRegistration: true, protectedAdministrator: true,
     separateHttpHistoryAndProjects: true, projectFileBrowseSearchReadWrite: true, largeUtf8File: true, staleFileSaveRejected: true,
-    fileTraversalAndCrossUserIsolation: true, rejectedCrossUserReadsAndMutations: true, isolatedEvents: true, syntheticLocalProviderReplies: syntheticResponses, paidModelCalls: 0 }));
+    realSendAndInterrupt: true, localControlTimingsMs: controlTimings, chatImageAndFileDownloads: true, chatFileCrossUserIsolation: true, fileTraversalAndCrossUserIsolation: true, rejectedCrossUserReadsAndMutations: true, isolatedEvents: true, syntheticLocalProviderReplies: syntheticResponses, paidModelCalls: 0 }));
 } finally {
   for (const peer of peers) peer.close();
-  await runtime?.close(); provider.close(); rmSync(root, { recursive: true, force: true });
+  heldResponse?.end(); await runtime?.close(); provider.close(); rmSync(root, { recursive: true, force: true });
 }

@@ -27,7 +27,7 @@ data class TimelineItem(val id: String, val type: String, val text: String, val 
     val status: String = "", val changes: List<Change> = emptyList(), val turnId: String = "",
     val phase: String = "", val turnStatus: String = "", val images: List<TimelineImage> = emptyList(),
     val delivery: String = "", val questions: List<InputQuestion> = emptyList(),
-    val input: JsonArray = JsonArray(emptyList()), val commandOutputOmitted: Boolean = false)
+    val input: JsonArray = JsonArray(emptyList()), val commandOutputOmitted: Boolean = false, val artifacts: List<ChatArtifact> = emptyList())
 data class TimelineImage(val source: String, val name: String = "Attached image")
 data class Change(val path: String, val diff: String)
 data class PendingInput(val id: String, val method: String, val params: JsonObject)
@@ -81,7 +81,7 @@ data class ScreenState(
     val chatMode: String = "codex", val accessMode: String = "host", val historyAvailable: Boolean = true,
     val sentMessageEdit: SentMessageEdit? = null,
     val accent: String = "exchange", val motion: Boolean = true,
-    val activeTurnId: String = "",
+    val activeTurnId: String = "", val stoppingChats: Set<String> = emptySet(),
     val appUpdate: AppUpdate? = null, val updateChecking: Boolean = false,
     val updateDownloading: Boolean = false, val updateProgress: Int = 0,
     val updateApk: String? = null, val updateMessage: String = "",
@@ -136,6 +136,10 @@ fun parseItem(raw: JsonObject, turnId: String = "", turnStatus: String = ""): Ti
     if (text.isEmpty() && type !in listOf("agentMessage", "userMessage")) text = raw.text("status").ifEmpty { type }
     return TimelineItem(raw.text("id"), type, text, raw.text("command").ifEmpty { raw.text("server").ifEmpty { raw.text("namespace").ifEmpty { raw.text("name") } } }, raw.text("status"), changes,
         turnId = turnId, phase = raw.text("phase"), turnStatus = turnStatus, images = images,
+        artifacts = if (type == "imageGeneration" && raw.text("status") == "completed") {
+            val source = raw.text("savedPath").ifEmpty { raw.text("result").let { if (it.startsWith("data:image/")) it else if (it.isNotBlank()) "data:image/png;base64,$it" else "" } }
+            if (source.isBlank()) emptyList() else listOf(ChatArtifact("Generated image", source, true))
+        } else emptyList(),
         delivery = raw.text("delivery"), questions = if (type == "agentMessage") parseAsyncQuestions(raw) else emptyList(),
         input = if (type == "userMessage") raw.array("content") else JsonArray(emptyList()),
         commandOutputOmitted = type == "commandExecution" && raw["_commandOutputOmitted"]?.jsonPrimitive?.booleanOrNull == true)

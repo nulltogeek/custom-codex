@@ -1,0 +1,5 @@
+See images and files shared by Codex directly in chat. Generated images and local Markdown image links show previews; file cards offer Open and Save. Downloads are checked against your chat and private workspace. Local chat downloads support regular files up to 8 MB; unavailable outputs show Retry or a clear error.
+
+Sending no longer waits for full chat history or another chat's queue check. Stop stays available during background loading and immediately shows Stopping while the server confirms the interruption. Queued follow-ups remain paused after Stop.
+
+After updating, sign in again if the server restart expired your session.

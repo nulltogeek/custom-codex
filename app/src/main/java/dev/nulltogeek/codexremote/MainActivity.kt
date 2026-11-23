@@ -540,17 +540,17 @@ private val LightColors = lightColorScheme(
                 }
             }
         }
-        ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval, loadImage = vm::attachmentImage, answerQuestion = answerQuestion, editMessage = vm::editSentMessage, chooseStarter = vm::draft)
+        ChatTimeline(state, Modifier.weight(1f), vm::loadOlder, vm::showDiff, approval, loadImage = vm::attachmentImage, answerQuestion = answerQuestion, editMessage = vm::editSentMessage, chooseStarter = vm::draft, loadArtifact = { item, artifact -> vm.chatArtifact(requireNotNull(state.selectedChat).id, item, artifact) })
         ChatComposer(state, vm, onPick = { picker.launch(it) })
     }
     state.sentMessageEdit?.let { edit -> SentMessageEditDialog(edit.copy(error = edit.error ?: state.notice), state.connection == "Connected",
         state.selectedChat?.status == "active" || state.activeTurnId.isNotEmpty(), vm::sentEditText,
-        vm::removeSentEditAttachment, vm::resendEditedMessage, vm::interrupt, vm::cancelSentEdit, stopPending = state.loading) }
+        vm::removeSentEditAttachment, vm::resendEditedMessage, vm::interrupt, vm::cancelSentEdit, stopPending = state.selectedChat?.id in state.stoppingChats) }
 }
 
 @Composable internal fun ChatTimeline(state: ScreenState, modifier: Modifier = Modifier, loadOlder: () -> Unit, showDiff: (Change) -> Unit, approval: (PendingInput) -> Unit,
     loadImage: suspend (String) -> ByteArray = { error("Image unavailable") }, answerQuestion: (TimelineItem) -> Unit = {},
-    editMessage: ((TimelineItem) -> Unit)? = null, chooseStarter: (String) -> Unit = {}) {
+    editMessage: ((TimelineItem) -> Unit)? = null, chooseStarter: (String) -> Unit = {}, loadArtifact: suspend (TimelineItem, ChatArtifact) -> ByteArray = { _, _ -> error("Output unavailable") }) {
     val listState = remember(state.selectedChat?.id) { LazyListState() }
     val followTail by remember(listState) { derivedStateOf { !listState.canScrollBackward } }
     val scope = rememberCoroutineScope()
@@ -581,7 +581,7 @@ private val LightColors = lightColorScheme(
             items(messages.asReversed(), key = { it.id }, contentType = { it.type }) { item ->
                 MessageItem(item, showDiff, loadImage, answerQuestion, item.id in state.answeredInputs || questionAnswered(item, state.timeline),
                     editMessage = editMessage, canEdit = !state.sending && !state.loading && !state.uploading && !state.uncertainSend && state.selectedChat?.archived != true,
-                    highlighted = item.id == selectedQuestion)
+                    highlighted = item.id == selectedQuestion, loadArtifact = loadArtifact)
             }
             if (state.timeline.isEmpty() && state.chatSyncing) item {
                 Row(Modifier.fillMaxWidth().padding(12.dp).testTag("chat-syncing"), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -640,13 +640,13 @@ private val LightColors = lightColorScheme(
 
 @Composable internal fun MessageItem(item: TimelineItem, showDiff: (Change) -> Unit, loadImage: suspend (String) -> ByteArray,
     answerQuestion: (TimelineItem) -> Unit = {}, answered: Boolean = false,
-    editMessage: ((TimelineItem) -> Unit)? = null, canEdit: Boolean = true, highlighted: Boolean = false) {
+    editMessage: ((TimelineItem) -> Unit)? = null, canEdit: Boolean = true, highlighted: Boolean = false, loadArtifact: suspend (TimelineItem, ChatArtifact) -> ByteArray = { _, _ -> error("Output unavailable") }) {
     var visibleLimit by rememberSaveable(item.id) { mutableIntStateOf(6000) }
     var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
     var copied by remember(item.id, item.text) { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     LaunchedEffect(copied) { if (copied) { kotlinx.coroutines.delay(1500); copied = false } }
-    val user = item.type == "userMessage"; val tool = item.type !in listOf("userMessage", "agentMessage", "finalChanges", "error")
+    val user = item.type == "userMessage"; val tool = item.type !in listOf("userMessage", "agentMessage", "imageGeneration", "finalChanges", "error")
     val finalChanges = item.type == "finalChanges"
     val label = if (user) "YOU" else if (item.type == "finalChanges") "CHANGES" else if (item.type == "error") "ERROR" else if (!tool) "CODEX" else if (item.type == "commandExecution") "COMMAND" else item.type.uppercase()
     Box(Modifier.fillMaxWidth().testTag("message:${item.id}")) {
@@ -688,6 +688,8 @@ private val LightColors = lightColorScheme(
                         if (!answered) Button(onClick = { answerQuestion(item) }, modifier = Modifier.testTag("answer-question:${item.id}")) { Text("Answer questions") }
                     }
                 }
+                val artifacts = remember(item.text, item.artifacts) { (item.artifacts + if (item.type == "agentMessage") chatArtifacts(item.text) else emptyList()).distinctBy { it.source } }
+                artifacts.forEach { artifact -> key(artifact.source) { ChatArtifactCard(artifact) { loadArtifact(item, artifact) } } }
                 item.images.forEachIndexed { index, image -> HistoryImage(image.source, "${image.name} ${index + 1}", loadImage) }
                 item.changes.forEach { change -> OutlinedButton(onClick = { showDiff(change) }, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Difference, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(change.path, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis) } }
             }

@@ -36,16 +36,22 @@ async function performWorkspaceFiles(context, catalogue, input) {
   const boundary = context.workspaceRoot;
   const relative = boundary && posix.relative(boundary, root);
   if (boundary && (relative === '..' || relative.startsWith('../') || posix.isAbsolute(relative))) throw failure(403, 'Choose a folder inside your private workspace.');
-  const encoded = Buffer.from(JSON.stringify({ ...input, root, boundary })).toString('base64');
+  return executeFileOperation(context, { ...input, root, boundary });
+}
+
+export async function executeFileOperation(context, input) {
+  const encoded = Buffer.from(JSON.stringify(input)).toString('base64');
   const args = ['-I', '-c', script, ...encoded.match(/.{1,30000}/g)];
+  const boundary = context.workspaceRoot;
+  const outputLimit = input.action === 'download' ? 12 * 1024 * 1024 : 4 * 1024 * 1024;
   let stdout;
   if (boundary) {
     if (typeof context.call !== 'function') throw failure(503, 'The private workspace is unavailable.');
-    const result = await context.call('command/exec', { command: ['python3', ...args], cwd: boundary, timeoutMs: 10000, outputBytesCap: 4 * 1024 * 1024, sandboxPolicy: { type: 'dangerFullAccess' } });
+    const result = await context.call('command/exec', { command: ['python3', ...args], cwd: boundary, timeoutMs: 10000, outputBytesCap: outputLimit, sandboxPolicy: { type: 'dangerFullAccess' } });
     if (result.exitCode !== 0) throw failure(503, 'The file operation could not complete.');
     stdout = result.stdout;
   } else {
-    ({ stdout } = await execute('/usr/bin/python3', args, { timeout: 15000, maxBuffer: 4 * 1024 * 1024 }));
+    ({ stdout } = await execute('/usr/bin/python3', args, { timeout: 15000, maxBuffer: outputLimit }));
   }
   let response;
   try { response = JSON.parse(stdout); } catch { throw failure(503, 'The file operation could not complete.'); }
