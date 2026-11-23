@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { WebSocketServer } from 'ws';
 import { receiveUpload, serveUploadImage } from './uploads.mjs';
 import { serveAppUpdate, defaultUpdateDirectory } from './app-updates.mjs';
+import { workspaceFiles, receiveFileRequest } from './workspace-files.mjs';
 const require = createRequire(import.meta.url);
 
 export function pairingToken(path) {
@@ -98,6 +99,7 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
     !req.headers.origin && timingSafeEqual(expected, digest(req.headers.authorization ?? ''));
   const defaults = { broker, codexHome, backendPid, backendVersion, runtimeMode, liveProjects, uploadDirectory };
   const uploadsInFlight = new Map(); let totalUploads = 0;
+  const filesInFlight = new Map(); let totalFiles = 0;
   const server = createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json'); res.setHeader('Cache-Control', 'no-store');
     const reply = (status, body) => { res.writeHead(status); res.end(JSON.stringify(body)); };
@@ -160,6 +162,21 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
     catch (error) { return reply(error.status ?? 503, { error: error.status ? error.message : 'Your private workspace is unavailable. Contact the administrator.' }); }
     if (!authorized(req)) return reply(401, { error: 'Authentication required' });
     const { broker, codexHome, backendPid, backendVersion, runtimeMode, liveProjects = () => [], uploadDirectory } = context;
+    if (req.url === '/v1/files' && req.method === 'POST') {
+      if (runtimeMode !== 'standalone') { req.resume(); return reply(404, { error: 'Project files require the standalone server.' }); }
+      const key = session?.userId ?? 'owner', count = filesInFlight.get(key) ?? 0;
+      if (count >= 2 || totalFiles >= 8) { req.resume(); return reply(429, { error: 'Wait for current file operations to finish.' }); }
+      filesInFlight.set(key, count + 1); totalFiles++;
+      try {
+        const input = await receiveFileRequest(req);
+        if (!authorized(req)) return reply(401, { error: 'Authentication required' });
+        const catalogue = context.readProjects ? await context.readProjects() : readProjects(codexHome, liveProjects());
+        if (!authorized(req)) return reply(401, { error: 'Authentication required' });
+        return reply(200, await workspaceFiles(context, catalogue, input));
+      } catch (error) { if (!res.destroyed) return reply(error.status ?? 503, { error: error.status ? error.message : 'Your project files are temporarily unavailable.' }); }
+      finally { totalFiles--; const remaining = filesInFlight.get(key) - 1; if (remaining) filesInFlight.set(key, remaining); else filesInFlight.delete(key); }
+      return;
+    }
     if (req.url === '/v1/attachments' && req.method === 'POST') {
       const key = session?.userId ?? 'owner', own = uploadsInFlight.get(key) ?? 0;
       if (own >= 2 || totalUploads >= 8) { req.resume(); return reply(429, { error: 'Too many uploads. Wait for current uploads to finish.' }); }
@@ -182,7 +199,7 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
     }
     if (req.url === '/v1/host') return reply(200, { name: hostname(), backendPid, backendVersion,
       user: session?.user, bridgeVersion: '2', runtimeMode, codexHome, configFile: join(codexHome, 'config.toml'), ready: broker.ready, epoch: broker.epoch,
-      capabilities: { userManagement: session?.user?.role === 'admin', userDeletion: session?.user?.role === 'admin' && typeof authentication?.deleteUser === 'function', registration: Boolean(authentication?.signupEnabled), workspaceRoot: context.workspaceRoot ?? null, passwordChange: Boolean(authentication?.canChangePassword), attachments: true, appUpdates: true, maxUploadBytes: 20 * 1024 * 1024, mobileModes: ['codex', 'chat'], accessModes: context.workspaceRoot ? ['host', 'ask', 'read-only'] : ['host', 'ask', 'read-only', 'full'] },
+      capabilities: { projectFiles: runtimeMode === 'standalone', userManagement: session?.user?.role === 'admin', userDeletion: session?.user?.role === 'admin' && typeof authentication?.deleteUser === 'function', registration: Boolean(authentication?.signupEnabled), workspaceRoot: context.workspaceRoot ?? null, passwordChange: Boolean(authentication?.canChangePassword), attachments: true, appUpdates: true, maxUploadBytes: 20 * 1024 * 1024, mobileModes: ['codex', 'chat'], accessModes: context.workspaceRoot ? ['host', 'ask', 'read-only'] : ['host', 'ask', 'read-only', 'full'] },
       initialization: { resultReceived: Boolean(broker.initResult), notificationReceived: broker.desktopNotificationSeen, errorCode: broker.initializationError } });
     if (req.url === '/v1/projects') {
       try { return reply(200, context.readProjects ? await context.readProjects() : readProjects(codexHome, liveProjects())); }

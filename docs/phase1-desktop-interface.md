@@ -23,7 +23,8 @@ deployment files live on `nulltogeek@192.168.1.7`.
 - New-chat starter cards prepare editable drafts and never send on selection.
 
 This phase covers the shell, navigation, conversations and composer. Dedicated
-file, terminal, Git, browser and integration panels remain future work.
+terminal, Git, browser and integration panels remain future work.
+Version 0.10.0 adds the [project file browser and editor](project-files.md).
 
 ## Local verification
 

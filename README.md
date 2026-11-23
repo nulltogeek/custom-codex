@@ -3,13 +3,15 @@
 Local development and builds now run from this checkout; production remains
 on `nulltogeek@192.168.1.7`. See [local build and deployment](docs/local-development.md).
 
+Version **0.10.0** adds project files: browse folders, search filenames, edit UTF-8 code and save on the server with stale-save checks. Phones use a dedicated editor; wider screens show folders beside it. See [project files and editor](docs/project-files.md).
+
 Version **0.9.4** lets administrators recreate deleted usernames as fresh accounts. Recreated accounts get a new identity and cannot inherit old chats, files, or phone caches. See [username reuse verification](docs/username-reuse-verification.md).
 
 Version **0.9.3** fixes user-creation feedback and visibility: the form waits for confirmation, shows errors without closing, and adds confirmed accounts immediately. The toolbar refresh now loads users. See [creation verification](docs/user-creation-verification.md).
 
 Version **0.9.2** adds confirmed administrator user deletion. Codex questions support both suggested choices and typed answers; the blocking and asynchronous flows are verified in the emulator. See [account controls](docs/multi-user-android.md) and [answering questions](docs/interactive-questions.md).
 
-Version **0.9.1** groups chats by project, keeps orphaned chats separate, and fixes the resting Delete background. These changes are included in 0.9.4, available through **Settings → App updates → Check for updates**. See [project-based navigation](docs/project-chat-navigation.md) and [updater publication](docs/in-app-updates.md).
+Version **0.9.1** groups chats by project, keeps orphaned chats separate, and fixes the resting Delete background. These changes are included in 0.10.0, available through **Settings → App updates → Check for updates**. See [project-based navigation](docs/project-chat-navigation.md) and [updater publication](docs/in-app-updates.md).
 
 Version **0.9.0** adds the phase 1 desktop-style workspace: adaptive sidebar, pinned chats, project search, conversation actions, and a redesigned composer. See [phase 1 features, verification and installation](docs/phase1-desktop-interface.md).
 
@@ -21,7 +23,7 @@ A native Android 11+ client for a Codex app-server on your Linux machine. Suppor
 
 The deployed server runs inside the systemd desktop container at **192.168.1.7** on `emz-ops-work1`, under the `nulltogeek` user service `codex-remote.service`. It uses the container's existing `/home/nulltogeek/.codex` configuration and history, private Node.js **22.23.2**, and private Codex **0.167.0-alpha.3.2**. GNOME and the desktop app can be closed. The container and its WireGuard connection must remain available; the original local service is disabled.
 
-The APK keeps using **https://codex.geeksun.ir** over your private WireGuard network. Existing Nginx on `79.175.177.57` terminates HTTPS/WSS and forwards to `192.168.1.7:8787`. Sign in again as **nulltogeek** with your current app password: the existing account hash and uploads were preserved, while sessions were renewed by the move. The old initial-login reference is obsolete. The app encrypts its session using Android Keystore and does not store the password. Current in-app update assets are **0.9.4/code 38**, compatible with the 0.8.0/0.9.0/0.9.1/0.9.2/0.9.3 signing key; 0.7.24 needs a one-time reinstall because its key differs. The target retains its own saved chats; this deployment does not import the prepared filmapp queue or enable recurring sync.
+The APK keeps using **https://codex.geeksun.ir** over your private WireGuard network. Existing Nginx on `79.175.177.57` terminates HTTPS/WSS and forwards to `192.168.1.7:8787`. Sign in again as **nulltogeek** with your current app password: the existing account hash and uploads were preserved, while sessions were renewed by the move. The old initial-login reference is obsolete. The app encrypts its session using Android Keystore and does not store the password. Current in-app update assets are **0.10.0/code 39**, compatible with the 0.8.0/0.9.0/0.9.1/0.9.2/0.9.3/0.9.4 signing key; 0.7.24 needs a one-time reinstall because its key differs. The target retains its own saved chats; this deployment does not import the prepared filmapp queue or enable recurring sync.
 
 Read [task completion notifications](docs/task-notifications.md), [the message queue guide](docs/message-queue.md), [the chat display and Archived section guide](docs/chat-display.md), [favorites, swipe archive and password changes](docs/mobile-0.7.0.md), [the 0.6.0 chat loading guide](docs/mobile-0.6.0.md), [the compact 0.5.0 layout guide](docs/mobile-0.5.0.md), [in-app updates](docs/in-app-updates.md), [the 0.3.0 feature guide](docs/mobile-0.3.0.md), [username/password login](docs/username-password-login.md) and [the deployed WireGuard setup and recovery guide](docs/local-wireguard-deployment.md) first. [Standalone runtime details](docs/standalone-server.md) cover installation on another host. Node.js 22.13+ is required. The historical desktop-sharing launcher still uses the earlier token protocol described in [the desktop runbook](docs/runbook.md).
 

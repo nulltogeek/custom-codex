@@ -21,6 +21,8 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     private val authenticationMutex = kotlinx.coroutines.sync.Mutex()
     private val userManagementMutex = kotlinx.coroutines.sync.Mutex()
     private val userListRevision = java.util.concurrent.atomic.AtomicLong()
+    private val fileRevision = java.util.concurrent.atomic.AtomicLong()
+    private var fileJob: Job? = null
     private val accountStateLock = Any()
     private val mutable = MutableStateFlow(ScreenState(endpoint = store.endpoint, username = store.username, theme = store.theme, accent = store.accent, motion = store.motion, loadCommandOutput = store.loadCommandOutput))
     val state: StateFlow<ScreenState> = mutable.asStateFlow()
@@ -250,6 +252,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         host = host.text("name", "Your computer"), accountId = host.obj("user").text("id"),
         accountRole = host.obj("user").text("role", "user"),
         userManagementAvailable = host.obj("capabilities")["userManagement"]?.jsonPrimitive?.booleanOrNull == true,
+        projectFilesAvailable = host.obj("capabilities")["projectFiles"]?.jsonPrimitive?.booleanOrNull == true,
         userDeletionAvailable = host.obj("capabilities")["userDeletion"]?.jsonPrimitive?.booleanOrNull == true,
         registrationAvailable = host.obj("capabilities")["registration"]?.jsonPrimitive?.booleanOrNull != false,
         availableAccessModes = host.obj("capabilities").array("accessModes").mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
@@ -494,6 +497,75 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     }
     private fun saveChatOptions() { val state = mutable.value; store.chatOptions(state.selectedChat?.id ?: "new", state.chatMode, state.accessMode) }
     private fun mobileParams(state: ScreenState) = buildJsonObject { put("mobileMode", state.chatMode); put("accessMode", state.accessMode) }
+    fun openFiles(project: Project) {
+        if (!mutable.value.projectFilesAvailable || project.roots.isEmpty() || mutable.value.fileBrowser?.dirty == true) return
+        mutable.update { it.copy(fileBrowser = FileBrowserState(project)) }
+        browseFiles("")
+    }
+    fun closeFiles() {
+        if (mutable.value.fileBrowser?.saving == true) return
+        fileRevision.incrementAndGet(); fileJob?.cancel()
+        mutable.update { it.copy(fileBrowser = null) }
+    }
+    fun fileQuery(query: String) { mutable.update { it.copy(fileBrowser = it.fileBrowser?.copy(query = query.take(200))) } }
+    fun fileDraft(text: String) {
+        mutable.update { state -> state.copy(fileBrowser = state.fileBrowser?.let {
+            if (it.saving || it.document?.writable != true) it else it.copy(draft = text, message = null)
+        }) }
+    }
+    private fun fileOperation(browser: FileBrowserState, operation: suspend () -> JsonObject, apply: (FileBrowserState, JsonObject) -> FileBrowserState) {
+        val identity = store.sessionIdentity; val revision = fileRevision.incrementAndGet()
+        fileJob?.cancel()
+        fileJob = accountScope.launch(Dispatchers.IO) {
+            try {
+                val result = operation(); currentCoroutineContext().ensureActive()
+                if (identity == store.sessionIdentity && revision == fileRevision.get()) mutable.update { state ->
+                    state.copy(fileBrowser = state.fileBrowser?.takeIf { it.project.id == browser.project.id }?.let { apply(it, result) })
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (identity == store.sessionIdentity && revision == fileRevision.get()) {
+                    if (e is SessionExpiredException) clearSession(e.message)
+                    else mutable.update { it.copy(fileBrowser = it.fileBrowser?.copy(loading = false, saving = false, error = e.message ?: "File operation failed.")) }
+                }
+            }
+        }
+    }
+    fun browseFiles(path: String, rootIndex: Int? = null, search: Boolean = false, more: Boolean = false) {
+        val previous = mutable.value.fileBrowser ?: return
+        if (previous.saving) return
+        val browser = previous.copy(rootIndex = rootIndex ?: previous.rootIndex, directory = path,
+            document = null, draft = "", searching = search, loading = true, error = null, message = null,
+            entries = if (more) previous.entries else emptyList())
+        mutable.update { it.copy(fileBrowser = browser) }
+        val input = workspaceRequest(browser, if (search) "search" else "list", path, if (more) previous.nextOffset ?: 0 else 0)
+        fileOperation(browser, { rpc.files(input) }) { current, result -> current.copy(
+            loading = false, entries = (if (more) previous.entries else emptyList()) + parseWorkspaceEntries(result),
+            nextOffset = result["nextOffset"]?.jsonPrimitive?.intOrNull,
+            truncated = result["truncated"]?.jsonPrimitive?.booleanOrNull == true)
+        }
+    }
+    fun readFile(path: String) {
+        val browser = mutable.value.fileBrowser ?: return
+        if (browser.saving) return
+        mutable.update { it.copy(fileBrowser = browser.copy(loading = true, error = null, message = null)) }
+        fileOperation(browser, { rpc.files(workspaceRequest(browser, "read", path)) }) { current, result ->
+            val document = WorkspaceDocument(result.text("path"), result.text("content"), result.text("revision"), result["writable"]?.jsonPrimitive?.booleanOrNull == true)
+            current.copy(loading = false, document = document, draft = document.content)
+        }
+    }
+    fun saveFile() {
+        val browser = mutable.value.fileBrowser ?: return
+        val document = browser.document ?: return
+        if (!browser.dirty || browser.loading || browser.saving || !document.writable) return
+        if (browser.draft.toByteArray(Charsets.UTF_8).size > 256 * 1024) {
+            mutable.update { it.copy(fileBrowser = it.fileBrowser?.copy(error = "The editor supports text files up to 256 KB.")) }; return
+        }
+        mutable.update { it.copy(fileBrowser = browser.copy(saving = true, error = null, message = null)) }
+        fileOperation(browser, { rpc.files(workspaceRequest(browser, "write", document.path)) }) { current, result ->
+            current.copy(saving = false, document = document.copy(content = browser.draft, revision = result.text("revision")), message = "Saved on server")
+        }
+    }
     fun page(value: String) {
         cancelChatSync()
         mutable.update { it.copy(page = value, selectedChat = null, diff = null, chatSyncing = false) }

@@ -1,0 +1,5 @@
+Open project folders, browse subfolders, and search filenames from the Projects screen or a project's chat header.
+
+Read and edit UTF-8 text files up to 256 KB. Save changes on the server, with revision checks that reject stale saves and prompts before discarding unsaved edits. Read-only, binary and unsupported files show clear messages. Wider screens show folders beside the editor.
+
+Regular-user file operations run inside their isolated workspace containers. Project folders and account identities are checked by the server; links cannot be opened.

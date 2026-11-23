@@ -100,6 +100,22 @@ try {
   await bob.call('thread/name/set', { threadId: bt.id, name: 'Bob staging chat' });
   const created = await alice.call('project/create', { idempotencyKey: randomUUID(), name: 'Alice staging project', roots: [{ path: ah.value.capabilities.workspaceRoot }] });
   const projectId = created.project?.id ?? created.id; assert.ok(projectId);
+  const files = (action, path = '', extra = {}, session = a) => http('/v1/files', session, 'POST', { action, path, projectId, rootIndex: 0, ...extra });
+  await alice.call('thread/metadata/update', { threadId: at.id, projectId });
+  // Internal execution prepares disposable files; phones never receive command/exec access.
+  await runtime.pool.get(a.user).then(workspace => workspace.call('command/exec', { command: ['python3', '-c',
+    "from pathlib import Path; Path('editor.txt').write_text('before'); Path('large.txt').write_text('あ'*80000); Path('link').symlink_to('/etc/passwd')"],
+    cwd: ah.value.capabilities.workspaceRoot, sandboxPolicy: { type: 'dangerFullAccess' } }));
+  assert.equal((await files('list')).value.entries.some(entry => entry.name === 'editor.txt'), true);
+  const file = await files('read', 'editor.txt'); assert.equal(file.status, 200); assert.equal(file.value.content, 'before');
+  assert.equal((await files('read', 'large.txt')).value.content, 'あ'.repeat(80000));
+  assert.equal((await files('write', 'editor.txt', { revision: file.value.revision, content: 'Edited from the phone\nسلام' })).status, 200);
+  assert.equal((await files('read', 'editor.txt')).value.content, 'Edited from the phone\nسلام');
+  assert.equal((await files('write', 'editor.txt', { revision: file.value.revision, content: 'stale' })).status, 409);
+  assert.equal((await files('search', '', { query: 'editor' })).value.entries[0].path, 'editor.txt');
+  assert.equal((await files('read', 'editor.txt', {}, b)).status, 404);
+  assert.equal((await files('read', '../account.json')).status, 400);
+  assert.equal((await files('read', 'link')).status, 403);
   await alice.call('thread/metadata/update', { threadId: at.id, projectId });
   const aProjects = await http('/v1/projects', a), bProjects = await http('/v1/projects', b), aHistory = await http('/v1/history', a), bHistory = await http('/v1/history', b);
   assert.equal(aProjects.status, 200); assert.equal(bProjects.status, 200); assert.equal(aHistory.status, 200); assert.equal(bHistory.status, 200);
@@ -129,7 +145,8 @@ try {
   assert.equal(syntheticResponses, 2);
   console.log(JSON.stringify({ realStandaloneAndDocker: true, disposableAccountsOnly: true, signupAndLogin: true,
     hostIdentitiesAndRoles: true, adminListCreateDisableReenableResetRevokeAndRegistration: true, protectedAdministrator: true,
-    separateHttpHistoryAndProjects: true, rejectedCrossUserReadsAndMutations: true, isolatedEvents: true, syntheticLocalProviderReplies: syntheticResponses, paidModelCalls: 0 }));
+    separateHttpHistoryAndProjects: true, projectFileBrowseSearchReadWrite: true, largeUtf8File: true, staleFileSaveRejected: true,
+    fileTraversalAndCrossUserIsolation: true, rejectedCrossUserReadsAndMutations: true, isolatedEvents: true, syntheticLocalProviderReplies: syntheticResponses, paidModelCalls: 0 }));
 } finally {
   for (const peer of peers) peer.close();
   await runtime?.close(); provider.close(); rmSync(root, { recursive: true, force: true });

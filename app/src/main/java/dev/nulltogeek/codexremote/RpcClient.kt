@@ -124,6 +124,24 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
             WireJson.parseToJsonElement(it.body?.string() ?: "{}").jsonObject
         }
     }
+    suspend fun files(input: JsonObject): JsonObject = withContext(Dispatchers.IO) {
+        val body = input.toString().toRequestBody("application/json".toMediaType())
+        http.newBuilder().followRedirects(false).followSslRedirects(false).build().newCall(
+            Request.Builder().url(endpoint + "/v1/files").header("Authorization", "Bearer $token").post(body).build()).awaitParsed {
+            if (it.code == 401) throw SessionExpiredException()
+            if (!it.isSuccessful) throw IOException(when (it.code) {
+                400 -> "Invalid file request. Refresh the project and try again."
+                403 -> "This file or folder is read-only or outside your project. Links cannot be opened."
+                404 -> "The file, folder or project is no longer available. Refresh and try again."
+                409 -> "This file changed on the server. Copy your edits, then reload the latest version."
+                413 -> "This file or folder is too large. The editor supports text files up to 256 KB."
+                415 -> "Only UTF-8 text files can be edited. Binary files and links cannot be opened."
+                429 -> "Wait for current file operations to finish, then retry."
+                else -> "Project files are unavailable (HTTP ${it.code}). Try again after reconnecting."
+            })
+            WireJson.parseToJsonElement(it.body?.string() ?: "{}").jsonObject
+        }
+    }
     suspend fun upload(name: String, mimeType: String, bytes: ByteArray, progress: (Int) -> Unit = {}): Attachment = withContext(Dispatchers.IO) {
         require(bytes.isNotEmpty() && bytes.size <= 20 * 1024 * 1024) { "Select a non-empty file up to 20 MB" }
         val body = object : RequestBody() {

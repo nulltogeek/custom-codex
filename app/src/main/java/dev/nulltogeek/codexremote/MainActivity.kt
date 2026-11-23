@@ -188,7 +188,7 @@ private val LightColors = lightColorScheme(
         openChat = vm::open, openProject = { vm.filterProject(it.id) }, close = { sidebarVisible = false },
         persistent = true, archive = { confirmArchive = it })
     Box(Modifier.weight(1f)) {
-    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = state.signedIn && !wide,
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = state.signedIn && !wide && state.fileBrowser == null,
         drawerContent = {
             if (state.signedIn && !wide) RemoteDrawer(state, vm,
                 navigate = { page -> closeDrawer { vm.page(page) } },
@@ -199,7 +199,7 @@ private val LightColors = lightColorScheme(
         }) {
     Scaffold(containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            if (state.signedIn) TopAppBar(expandedHeight = 56.dp, title = {
+            if (state.signedIn && state.fileBrowser == null) TopAppBar(expandedHeight = 56.dp, title = {
                 if (state.selectedChat != null && state.diff == null) Column {
                     Text(state.selectedChat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                     val project = state.projects.find { chatBelongsToProject(state.selectedChat, it, state.assignments) }
@@ -224,6 +224,9 @@ private val LightColors = lightColorScheme(
                 if (state.selectedChat != null || state.page != "users") IconButton(onClick = { vm.newChat(state.projects.find { it.id == state.projectFilter }) },
                     enabled = state.connection == "Connected" && !state.loading,
                     modifier = Modifier.testTag("header-new-chat")) { Icon(Icons.Outlined.Edit, "Start new chat", Modifier.size(23.dp)) }
+                val filesProject = state.projects.find { project -> state.selectedChat?.let { chatBelongsToProject(it, project, state.assignments) } ?: (project.id == state.projectFilter) }
+                if (state.projectFilesAvailable && filesProject != null && filesProject.roots.isNotEmpty()) IconButton(onClick = { vm.openFiles(filesProject) },
+                    enabled = state.connection == "Connected", modifier = Modifier.testTag("open-project-files")) { Icon(Icons.Outlined.FolderOpen, "Open project files") }
                 state.selectedChat?.let { chat ->
                     ChatOptionsMenu(chat, canRename(state), canMoveChat(state), { vm.beginRename(chat) }, { vm.beginMoveChat(chat) },
                         canArchive(state, chat), { confirmArchive = chat },
@@ -247,9 +250,11 @@ private val LightColors = lightColorScheme(
             }
             NoticeBanners(state, vm::noticeDismiss, vm::infoNoticeDismiss)
             if (state.writerConflict && state.selectedChat != null) ThreadWriterNotice(state, vm::continueInNewChat)
-            val screenKey = when { !state.signedIn -> "login"; state.diff != null -> "diff"; state.selectedChat != null -> "chat:${state.selectedChat.id}"; else -> state.page }
+            val screenKey = when { !state.signedIn -> "login"; state.fileBrowser != null -> "files"; state.diff != null -> "diff"; state.selectedChat != null -> "chat:${state.selectedChat.id}"; else -> state.page }
             Crossfade(screenKey, Modifier.weight(1f), animationSpec = tween(if (state.motion) 160 else 0), label = "Screen transition") { screen -> when {
                 screen == "login" -> AccountSignIn(state, vm)
+                screen == "files" && state.fileBrowser != null -> WorkspaceFilesScreen(state.fileBrowser, state.connection == "Connected",
+                    vm::closeFiles, vm::browseFiles, vm::readFile, vm::fileQuery, vm::fileDraft, vm::saveFile)
                 screen == "diff" && state.diff != null -> DiffScreen(state.diff)
                 screen.startsWith("chat:") && state.selectedChat != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     key(state.selectedChat.id) { Conversation(state, vm, approval = { approvalId = it.id }, answerQuestion = { asyncQuestion = it.id }) }
@@ -488,7 +493,7 @@ private val LightColors = lightColorScheme(
                 Surface(onClick = { vm.filterProject(project.id) }, color = Color.Transparent, shape = RoundedCornerShape(14.dp)) {
                     Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
-                            IconButton(onClick = { folders = project }) { Icon(Icons.Outlined.FolderOpen, "Folders for ${project.name}", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary) }
+                            IconButton(onClick = { if (state.projectFilesAvailable && project.roots.isNotEmpty()) vm.openFiles(project) else folders = project }) { Icon(Icons.Outlined.FolderOpen, "Folders for ${project.name}", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary) }
                         }
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
