@@ -23,7 +23,7 @@ class LibraryUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     private fun render(content: @Composable () -> Unit) {
         compose.activityRule.scenario.onActivity { activity -> activity.setContent {
-            RemoteTheme("dark", motion = false) { Surface { Box(Modifier.width(320.dp).fillMaxHeight()) { content() } } }
+            RemoteTheme("dark", motion = false) { Surface { Box(Modifier.width(320.dp).fillMaxHeight().safeDrawingPadding()) { content() } } }
         } }
         compose.waitForIdle()
     }
@@ -66,6 +66,7 @@ class LibraryUiTest {
             }
         } }
         val row = compose.onNodeWithTag("delete-swipe:two-way")
+        compose.onNodeWithText("Delete").assertDoesNotExist()
         row.performTouchInput { swipeLeft() }
         compose.waitUntil(10000) { deletes == 1 }; compose.waitForIdle()
         row.performTouchInput { swipeRight() }
@@ -165,15 +166,21 @@ class LibraryUiTest {
         compose.onNodeWithContentDescription("Delete chat").performClick()
         compose.onNodeWithText("Delete this chat permanently?").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()
+        compose.waitForIdle()
         compose.onNodeWithContentDescription("Options for chat Saved conversation").performClick()
         compose.onNodeWithText("Restore chat").performClick()
         compose.onNodeWithText("Restore this chat?").assertIsDisplayed()
         compose.onNodeWithText("Cancel").performClick()
-        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-        compose.onNodeWithText("Archived chats").assertIsDisplayed()
+        compose.waitForIdle()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
+        compose.onNodeWithTag("catalog-list").assertIsDisplayed()
         assertArchiveDestination()
         compose.onNodeWithText("Saved conversation").performClick()
-        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        compose.onNodeWithTag("chat-composer").assertIsDisplayed()
+        compose.waitForIdle()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
         assertArchiveDestination()
         compose.onNodeWithContentDescription("All projects").performClick()
         assertArchiveDestination()
@@ -187,7 +194,8 @@ class LibraryUiTest {
 
     private fun navigateTo(page: String) {
         openNavigation()
-        compose.onNodeWithTag("nav-$page").performScrollTo().performClick()
+        if (page == "settings") compose.onNodeWithTag("nav-$page").performClick()
+        else compose.onNodeWithTag("nav-$page").performScrollTo().performClick()
         compose.onNodeWithTag("navigation-drawer").assertIsNotDisplayed()
     }
 
@@ -195,6 +203,7 @@ class LibraryUiTest {
         openNavigation()
         compose.onNodeWithTag("nav-archived").assertIsSelected()
         compose.onNodeWithContentDescription("Close navigation").performClick()
+        compose.waitForIdle()
     }
 
     @Test fun drawerNavigationSelectsEachPageAndKeepsConversationAccessible() {
@@ -208,17 +217,20 @@ class LibraryUiTest {
         compose.onNodeWithTag("nav-chats").assertIsSelected()
         compose.onNodeWithTag("drawer-chat:navigation-chat").assertIsDisplayed()
         compose.onNodeWithContentDescription("Close navigation").performClick()
+        compose.waitForIdle()
         navigateTo("archived")
         navigateTo("projects")
         compose.runOnIdle { assertEquals("projects", vm.state.value.page) }
         navigateTo("settings")
         navigateTo("chats")
-        compose.onNodeWithText("Navigation conversation").performClick()
+        compose.onNodeWithTag("chat-row:navigation-chat").performClick()
         compose.onNodeWithTag("navigation-drawer").assertIsNotDisplayed()
         openNavigation()
         compose.onNodeWithTag("drawer-chat:navigation-chat").assertIsDisplayed()
         compose.onNodeWithContentDescription("Close navigation").performClick()
-        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        compose.waitForIdle()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
         openNavigation()
         compose.onNodeWithTag("nav-chats").assertIsSelected()
     }

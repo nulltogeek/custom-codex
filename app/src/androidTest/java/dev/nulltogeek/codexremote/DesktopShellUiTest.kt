@@ -50,7 +50,7 @@ class DesktopShellUiTest {
         InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
         compose.onNodeWithTag("open-navigation").performClick()
         compose.onNodeWithTag("navigation-drawer").assertIsDisplayed()
-        compose.onNodeWithText("Pinned").assertIsDisplayed()
+        compose.onNodeWithTag("drawer-group:project:p").performScrollTo().performClick()
         compose.onNodeWithTag("drawer-chat:pinned").assertIsDisplayed()
         capture("sidebar-light")
     }

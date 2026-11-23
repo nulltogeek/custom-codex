@@ -22,7 +22,7 @@ class ArchiveSelectionUiTest {
         val vm = RemoteViewModel(compose.activity.application)
         compose.activityRule.scenario.onActivity { activity -> activity.setContent {
             RemoteTheme("dark", motion = false) { Surface {
-                Box(Modifier.width(320.dp).fillMaxHeight()) {
+                Box(Modifier.width(320.dp).fillMaxHeight().safeDrawingPadding()) {
                     ChatsScreen(state.value, vm, approval = {}, archivedOnly = true, deleteSelected = deleted, delete = swipeDelete)
                 }
             } }
@@ -70,11 +70,18 @@ class ArchiveSelectionUiTest {
         val state = state(); var swipes = 0
         render(state, swipeDelete = { swipes++ })
         compose.onNodeWithTag("chat-row:one").performSemanticsAction(SemanticsActions.OnLongClick) { it() }
-        compose.onNodeWithTag("delete-swipe:two").performTouchInput { swipeLeft() }
-        compose.runOnIdle { assertEquals(0, swipes) }
+        compose.waitForIdle()
         compose.onNodeWithText("1 selected").assertIsDisplayed()
-        InstrumentationRegistry.getInstrumentation().uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-        compose.onNodeWithText("1 selected").assertDoesNotExist()
+        // Keep the gesture away from Android's system Back edge.
+        compose.onNodeWithTag("delete-swipe:two").performTouchInput {
+            swipe(androidx.compose.ui.geometry.Offset(width * 0.75f, centerY), androidx.compose.ui.geometry.Offset(width * 0.25f, centerY), 300)
+        }
+        compose.runOnIdle { assertEquals(0, swipes) }
+        // A disabled drag can be treated as a row tap; it must never delete or leave selection mode.
+        compose.onNodeWithContentDescription("Cancel selection").assertIsDisplayed()
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Cancel selection").assertDoesNotExist()
     }
 
     @Test fun disconnectedRunningQueuedAndBusySelectionsCannotBeDeleted() {

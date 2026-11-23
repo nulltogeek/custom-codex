@@ -68,14 +68,14 @@ internal fun withoutDeletedChat(state: ScreenState, id: String): ScreenState {
         gesturesEnabled = enabled,
         backgroundContent = {
             val colors = MaterialTheme.colorScheme
-            Surface(color = colors.errorContainer, shape = RoundedCornerShape(14.dp)) {
+            if (enabled && swipe.dismissDirection != SwipeToDismissBoxValue.Settled) Surface(color = colors.errorContainer, shape = RoundedCornerShape(14.dp)) {
                 Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = if (leftSwipe == SwipeToDismissBoxValue.StartToEnd) Arrangement.Start else Arrangement.End) {
                     Icon(Icons.Outlined.DeleteOutline, null)
                     Spacer(Modifier.width(8.dp)); Text("Delete")
                 }
             }
-        }) { content() }
+        }) { Surface(color = MaterialTheme.colorScheme.background, shape = RoundedCornerShape(12.dp)) { content() } }
 }
 
 internal fun passwordValidation(current: String, next: String, confirmation: String): String? = when {

@@ -309,10 +309,15 @@ private val LightColors = lightColorScheme(
         source.filter { chat ->
             val agent = chat.source == "subAgent" || chat.parentId != null
             val category = when (tab) { 1 -> chat.archived; 2 -> agent; 3 -> chat.id in favorites; else -> !chat.archived && !agent }
-            val projectMatch = project == null || chatBelongsToProject(chat, project, state.assignments)
-            category && projectMatch && (chat.title.contains(query, true) || chat.preview.contains(query, true))
+            val projectMatch = state.projectFilter == null || chatProjectId(state, chat) == state.projectFilter
+            category && projectMatch && chatMatchesSearch(state, chat)
         }
     }
+    val grouped = state.projectFilter == null
+    val sections = if (grouped) projectChatSections(state, list, includeEmptyProjects = tab == 0) else emptyList()
+    var expandedGroups by rememberSaveable(state.endpoint, state.username, archivedOnly) { mutableStateOf(listOf("orphans")) }
+    val expandedSectionKeys = if (query.isNotBlank()) sections.map { it.key }.toSet() else expandedGroups.toSet()
+    val visibleGroupItems = sections.sumOf { 1 + if (it.key in expandedSectionKeys) maxOf(1, it.chats.size) else 0 }
     var selectedIds by remember(archivedOnly, state.endpoint, state.username, state.signedIn, state.page, query, state.projectFilter) { mutableStateOf(emptySet<String>()) }
     var confirmIds by remember(archivedOnly, state.endpoint, state.username, state.signedIn, state.page, query, state.projectFilter) { mutableStateOf<Set<String>?>(null) }
     val selectedChats = if (archivedOnly) list.filter { it.id in selectedIds } else emptyList()
@@ -325,13 +330,16 @@ private val LightColors = lightColorScheme(
     val listState = key(tab, query, state.projectFilter) { rememberLazyListState() }
     val page = nextCatalogPage(state, tab)
     val error = page?.let { catalogPageError(state, it.archived) }
-    val expectedItems = (if (archivedOnly) 2 else 3) + (if (state.pending.isEmpty()) 0 else 1) + maxOf(1, list.size) + (if (page == null) 0 else 1)
+    val expectedItems = (if (archivedOnly) 2 else 3) + state.pending.size +
+        (if (grouped && sections.isNotEmpty()) visibleGroupItems else maxOf(1, list.size)) + (if (page == null) 0 else 1)
     val latestLoadMore by rememberUpdatedState(loadMore)
     LaunchedEffect(page, listState, expectedItems, error, state.connection, state.catalogLoading, state.refreshing) {
         if (page != null && error == null && !state.catalogLoading && !state.refreshing && state.connection == "Connected")
             snapshotFlow { listState.layoutInfo.totalItemsCount == expectedItems && nearCatalogEnd(listState.layoutInfo.totalItemsCount, listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1) }
                 .collect { nearEnd -> if (nearEnd) latestLoadMore(page.archived) }
     }
+    // Reset the list content identity along with its filter-specific scroll state.
+    key(tab, query, state.projectFilter) {
     RefreshableLibrary(state, refresh) {
         Column(Modifier.fillMaxSize()) {
             if (selecting) ArchiveSelectionBar(selectedChats.size, canDeleteChats(state, selectedChats),
@@ -342,7 +350,7 @@ private val LightColors = lightColorScheme(
                 item {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(if (archivedOnly) "Archived chats" else project?.name ?: "Your chats", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (archivedOnly) "Archived chats" else project?.name ?: if (grouped) "Your workspace" else "Unavailable project", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         if (project != null) IconButton(onClick = { vm.filterProject(null) }) { Icon(Icons.Outlined.Close, "All projects") }
                         if (!archivedOnly) FilledTonalIconButton(onClick = { vm.newChat(project) }, enabled = state.connection == "Connected" && !state.loading) { Icon(Icons.Outlined.Add, "New chat") }
@@ -356,28 +364,46 @@ private val LightColors = lightColorScheme(
                         }
                     }
                 }
-                item { CompactSearch(query, vm::search, if (archivedOnly) "Search archived chats" else "Search all chats") }
+                item { CompactSearch(query, vm::search, if (archivedOnly) "Search archived chats" else if (grouped) "Search projects and chats" else "Search project chats") }
                 if (!archivedOnly) item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf(0 to "Recent", 3 to "Pinned", 2 to "Agent chats").forEach { (i, label) -> FilterChip(selected = tab == i, onClick = { selectedTab = i }, label = { Text(label) }) } } }
-                if (list.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (archivedOnly) "No archived chats" else if (tab == 3) "No pinned chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (archivedOnly) "Chats you archive appear here. Open one to read or restore it." else if (tab == 3) "Pin a chat to keep it close at hand." else "Choose a project or start a conversation.") }
-                items(list, key = { it.id }, contentType = { "chat" }) { chat ->
-                    val p = state.projects.find { chatBelongsToProject(chat, it, state.assignments) }
-                    SwipeDeleteRow(chat, !selecting && canDeleteChat(state, chat), delete = { delete(chat) }) {
-                        ChatRow(chat, p?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) }, onClick = { if (selecting) toggle(chat) else vm.open(chat) },
-                            renameEnabled = canRename(state), onRename = { rename(chat) }, moveEnabled = canMoveChat(state), onMove = { move(chat) },
-                            archiveEnabled = canArchive(state, chat), onArchive = { archive(chat) },
-                            selecting = selecting, selected = chat.id in selectedIds, onLongClick = if (archivedOnly) ({ toggle(chat) }) else null)
+                if (list.isEmpty() && sections.isEmpty()) item { EmptyState(if (page != null && error == null) "Looking for chats…" else if (query.isNotEmpty()) "No matching chats" else if (archivedOnly) "No archived chats" else if (tab == 3) "No pinned chats yet" else "No chats here yet", if (page != null) "Checking more saved chats for this view." else if (archivedOnly) "Chats you archive appear here. Open one to read or restore it." else if (tab == 3) "Pin a chat to keep it close at hand." else "Choose a project or start a conversation.") }
+                if (grouped) sections.forEach { section ->
+                    val expanded = section.key in expandedSectionKeys
+                    item(key = "group:${section.key}", contentType = "project-heading") {
+                        ProjectChatHeading(section.title, section.chats.size, expanded,
+                            toggle = { expandedGroups = if (section.key in expandedGroups) expandedGroups - section.key else expandedGroups + section.key },
+                            modifier = Modifier.testTag("group:${section.key}"),
+                            open = section.project?.let { project -> { vm.filterProject(project.id) } })
                     }
-                }
+                    if (expanded) {
+                        if (section.chats.isEmpty()) item(key = "empty:${section.key}") { Text("No chats yet", Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall) }
+                        items(section.chats, key = { it.id }, contentType = { "chat" }) { chat -> CatalogChatRow(state, chat, vm, selecting, chat.id in selectedIds, { toggle(chat) }, favorite, archive, delete, rename, move, archivedOnly) }
+                    }
+                } else items(list, key = { it.id }, contentType = { "chat" }) { chat -> CatalogChatRow(state, chat, vm, selecting, chat.id in selectedIds, { toggle(chat) }, favorite, archive, delete, rename, move, archivedOnly) }
                 if (page != null) item(key = "catalog-footer") {
                     PageLoader(state.catalogLoading, error, "More chats load as you scroll", state.connection == "Connected") { loadMore(page.archived) }
                 }
             }
         }
     }
+    }
     confirmIds?.let { ids ->
         val targets = list.filter { it.id in ids }
         ArchiveDeleteDialog(ids.size, targets.size == ids.size && canDeleteChats(state, targets),
             dismiss = { confirmIds = null }, delete = { deleteSelected(targets); confirmIds = null })
+    }
+}
+
+@Composable private fun CatalogChatRow(state: ScreenState, chat: Chat, vm: RemoteViewModel,
+    selecting: Boolean, selected: Boolean, toggle: () -> Unit, favorite: (Chat) -> Unit,
+    archive: (Chat) -> Unit, delete: (Chat) -> Unit, rename: (Chat) -> Unit, move: (Chat) -> Unit, archivedOnly: Boolean) {
+    val project = state.projects.find { it.id == chatProjectId(state, chat) }
+    SwipeDeleteRow(chat, !selecting && canDeleteChat(state, chat), delete = { delete(chat) }) {
+        ChatRow(chat, project?.name ?: "No project", state.favoriteChats.any { it.id == chat.id }, onFavorite = { favorite(chat) },
+            onClick = { if (selecting) toggle() else vm.open(chat) },
+            renameEnabled = canRename(state), onRename = { rename(chat) }, moveEnabled = canMoveChat(state), onMove = { move(chat) },
+            archiveEnabled = canArchive(state, chat), onArchive = { archive(chat) },
+            selecting = selecting, selected = selected, onLongClick = if (archivedOnly) toggle else null)
     }
 }
 

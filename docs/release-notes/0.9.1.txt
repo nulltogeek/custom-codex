@@ -1,0 +1,1 @@
+Group chats by project in the workspace and sidebar. Projects start collapsed; expand one to see its own chats and pins. Chats without a project appear separately under No project. Search finds project names and chats within their groups. Fix the red Delete backgrounds showing through resting chat rows. Retains the 0.8.0/0.9.0 signing key; 0.7.24 requires a manual reinstall.

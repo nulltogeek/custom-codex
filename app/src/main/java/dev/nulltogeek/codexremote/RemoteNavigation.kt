@@ -11,6 +11,7 @@ import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -31,7 +32,9 @@ import androidx.compose.ui.unit.sp
     navigate: (String) -> Unit, newChat: () -> Unit, openChat: (Chat) -> Unit,
     openProject: (Project) -> Unit, close: () -> Unit, persistent: Boolean = false,
     archive: (Chat) -> Unit = {}) {
-    val (pinned, recent) = remember(state.chats, state.favoriteChats, state.searchTerm) { sidebarChatGroups(state) }
+    val (pinned, recent) = sidebarChatGroups(state)
+    val groups = projectChatSections(state, pinned + recent, includeEmptyProjects = true)
+    var expandedProjects by rememberSaveable(state.endpoint, state.username) { mutableStateOf(listOf("orphans")) }
     val content: @Composable () -> Unit = {
         Column(Modifier.fillMaxHeight().then(if (persistent) Modifier.statusBarsPadding().navigationBarsPadding() else Modifier)) {
             Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -44,17 +47,13 @@ import androidx.compose.ui.unit.sp
                     enabled = state.connection == "Connected" && !state.loading, tag = "drawer-new-chat") }
                 item {
                     OutlinedTextField(state.searchTerm, vm::search, Modifier.fillMaxWidth().padding(vertical = 6.dp).testTag("drawer-search"),
-                        placeholder = { Text("Search chats", style = MaterialTheme.typography.bodySmall) },
+                        placeholder = { Text("Search projects and chats", style = MaterialTheme.typography.bodySmall) },
                         leadingIcon = { Icon(Icons.Outlined.Search, null, Modifier.size(18.dp)) }, singleLine = true,
                         shape = RoundedCornerShape(12.dp), textStyle = MaterialTheme.typography.bodySmall,
                         colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant, focusedBorderColor = MaterialTheme.colorScheme.outline))
                 }
                 item { DrawerAction("Chats", Icons.AutoMirrored.Outlined.Chat, { navigate("chats") }, selected = state.page == "chats" && state.selectedChat == null, tag = "nav-chats") }
                 item { DrawerAction("Archived", Icons.Outlined.Archive, { navigate("archived") }, selected = state.page == "archived" && state.selectedChat == null, tag = "nav-archived") }
-                if (pinned.isNotEmpty()) {
-                    item { SidebarHeading("Pinned") }
-                    items(pinned, key = { "pinned:${it.id}" }) { chat -> SidebarChat(chat, state, vm, openChat, archive) }
-                }
                 item {
                     Row(Modifier.fillMaxWidth().padding(start = 12.dp, top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Projects", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -63,14 +62,21 @@ import androidx.compose.ui.unit.sp
                         }
                     }
                 }
-                items(state.projects.sortedByDescending { it.id in state.favoriteProjectIds }.take(8), key = { "drawer-project:${it.id}" }) { project ->
-                    DrawerAction(project.name, Icons.Outlined.Folder, { openProject(project) },
-                        selected = state.projectFilter == project.id && state.selectedChat == null, tag = "drawer-project:${project.id}")
+                groups.forEach { group ->
+                    val expanded = group.key in expandedProjects || state.searchTerm.isNotBlank()
+                    item(key = "drawer-group:${group.key}") {
+                        ProjectChatHeading(group.title, group.chats.size, expanded,
+                            toggle = { expandedProjects = if (group.key in expandedProjects) expandedProjects - group.key else expandedProjects + group.key },
+                            modifier = Modifier.testTag("drawer-group:${group.key}"),
+                            open = group.project?.let { project -> { openProject(project) } })
+                    }
+                    if (expanded) {
+                        items(group.chats, key = { "drawer-chat:${it.id}" }) { chat -> SidebarChat(chat, state, vm, openChat, archive) }
+                        if (group.chats.isEmpty()) item { Text("No chats yet", Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall) }
+                    }
                 }
                 item { DrawerAction("All projects", Icons.Outlined.FolderOpen, { navigate("projects") }, selected = state.page == "projects" && state.selectedChat == null, tag = "nav-projects") }
-                item { SidebarHeading(if (state.searchTerm.isBlank()) "Recents" else "Search results") }
-                items(recent, key = { "recent:${it.id}" }) { chat -> SidebarChat(chat, state, vm, openChat, archive) }
-                if (recent.isEmpty() && pinned.isEmpty()) item { Text(if (state.searchTerm.isBlank()) "Your conversations appear here" else "No matching chats", Modifier.padding(12.dp),
+                if (groups.isEmpty()) item { Text(if (state.searchTerm.isBlank()) "Your projects and conversations appear here" else "No matching projects or chats", Modifier.padding(12.dp),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 if (state.activeCursor != null) item { TextButton(onClick = { vm.loadMore(false) }, enabled = !state.catalogLoading && state.connection == "Connected", modifier = Modifier.fillMaxWidth()) {
                     Text(if (state.catalogLoading) "Loading…" else "Load more chats", style = MaterialTheme.typography.labelMedium)
@@ -111,6 +117,7 @@ import androidx.compose.ui.unit.sp
         shape = RoundedCornerShape(9.dp), modifier = Modifier.fillMaxWidth().testTag("drawer-chat:${chat.id}").semantics { selected = state.selectedChat?.id == chat.id }) {
         Row(Modifier.fillMaxWidth().heightIn(min = 46.dp).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(chat.title, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (state.favoriteChats.any { it.id == chat.id }) Icon(Icons.Outlined.PushPin, "Pinned chat", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             if (chat.status == "active") Box(Modifier.size(6.dp).background(MaterialTheme.colorScheme.secondary, CircleShape))
             ChatOptionsMenu(chat, canRename(state), canMoveChat(state), { vm.beginRename(chat) }, { vm.beginMoveChat(chat) },
                 canArchive(state, chat), { archive(chat) }, pinned = state.favoriteChats.any { it.id == chat.id }, pin = { vm.favorite(chat) })
@@ -153,6 +160,19 @@ import androidx.compose.ui.unit.sp
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable internal fun ProjectChatHeading(title: String, count: Int, expanded: Boolean, toggle: () -> Unit,
+    modifier: Modifier = Modifier, open: (() -> Unit)? = null) {
+    Surface(onClick = toggle, modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(12.dp)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = 12.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (title == "No project") Icons.Outlined.ChatBubbleOutline else Icons.Outlined.Folder, null, Modifier.size(20.dp))
+            Text(title, Modifier.weight(1f).padding(horizontal = 10.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+            Text(count.toString(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (open != null) IconButton(onClick = open, modifier = Modifier.size(36.dp)) { Icon(Icons.Outlined.OpenInNew, "Open project $title", Modifier.size(17.dp)) }
+            Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, if (expanded) "Collapse $title" else "Expand $title", Modifier.size(20.dp))
         }
     }
 }

@@ -3,6 +3,8 @@
 Local development and builds now run from this checkout; production remains
 on `nulltogeek@192.168.1.7`. See [local build and deployment](docs/local-development.md).
 
+Version **0.9.1** groups chats by project, keeps orphaned chats separate, and fixes the resting Delete background. See [project-based navigation](docs/project-chat-navigation.md).
+
 Version **0.9.0** adds the phase 1 desktop-style workspace: adaptive sidebar, pinned chats, project search, conversation actions, and a redesigned composer. See [phase 1 features, verification and installation](docs/phase1-desktop-interface.md).
 
 Version 0.8.0 source adds password signup, private per-user chats/projects/workspaces, administrator controls for `nulltogeek`, and a ChatGPT Android-inspired drawer and conversation layout. See the [Android account guide](docs/multi-user-android.md), [multi-user host setup and isolation](docs/multi-user-server.md), and [UI reference notes](docs/android-drawer-ui.md). Source changes require a bridge restart to activate; the existing published update assets are separate from the new build.
