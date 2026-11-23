@@ -46,6 +46,14 @@ User catalogues are queried inside their backend, rather than opening user-writa
 
 Users can register before their private runtime has started. If Docker, the image, or provider configuration is unavailable, private-runtime startup fails with an actionable error. An existing account should sign in again after host setup is fixed, rather than registering repeatedly.
 
+If an enabled account gets HTTP 503 immediately after sign-in, check that the
+configured image exists on the deployment host: `docker image inspect
+python:3.12.14-slim-bookworm`. Registration only writes an account record;
+`GET /v1/host` starts its private workspace. Installing the missing image fixes
+this prerequisite without an APK update or bridge restart. Do not recreate the
+account or reset its password for this failure. See the [deployed runtime
+recovery](user-runtime-login-recovery.md).
+
 The default limits are 100 registered accounts (including the administrator) and eight concurrent private runtimes. Each container is limited to one CPU, 1 GiB RAM, and 128 processes. The pool reclaims disconnected, idle runtimes without pending requests, approvals, or active turns after ten minutes, or earlier when a new user needs a full pool's idle slot. Saved history/workspaces survive runtime eviction. Requests fail clearly if every runtime slot is busy. Workspace mounts use persistent host storage; these container compute limits do not establish a hard per-user disk quota.
 
 Password hashing is globally limited to two concurrent checks/changes. Signup permits five attempts per source in ten minutes; failed sign-ins are tracked by source plus target username, with an additional source-wide ceiling. Model forwarding permits two concurrent requests per runtime and sixteen overall. Uploads permit two per user and eight overall, with the existing 20 MB file limit. Backend protocol frames are limited to 16 MiB; pending RPC counts and queued backend input are bounded as well.
