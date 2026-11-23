@@ -15,8 +15,14 @@ hash from the active registry, revokes all sessions/WebSockets, and retires its
 runtime so in-flight requests cannot reopen it. The owner cannot be deleted.
 Private workspace/history/upload files are retained for host-side recovery;
 the operation does not erase server backups. `deletedUsernames` in the registry
-reserves deleted names, preventing a new account from inheriting older phones'
-username-scoped caches. Disabled accounts may also be deleted. Account changes
+reserves deleted names for legacy clients. From 0.9.4, clients sending
+`X-Codex-Account-Identity: 2` can recreate a deleted username. The replacement
+receives a fresh UUID and `accountIdentityVersion: 2`; its runtime uses the new
+UUID and cannot access the deleted account’s data. Login to a replacement
+requires the same identity capability (legacy clients receive HTTP 426). Android
+binds cached data to the returned UUID and clears the old identity’s history,
+drafts, attachments, favorites, queue and notification records before saving
+the new login. Disabled accounts may also be deleted. Account changes
 already in progress must finish before deletion.
 
 ## Runtime and storage boundaries

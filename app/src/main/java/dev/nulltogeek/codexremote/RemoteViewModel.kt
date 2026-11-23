@@ -168,6 +168,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
             mutable.update { it.copy(loading = true, notice = null) }
             try {
                 disconnect()
+                TaskNotificationService.stop(getApplication())
                 stopAccountWork()
                 val cleaned = endpoint.trim().trimEnd('/')
                 val session = if (signup) rpc.signup(cleaned, username.trim(), password) else rpc.login(cleaned, username.trim(), password)
@@ -175,6 +176,10 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
                 val host = rpc.get("/v1/host")
                 synchronized(accountStateLock) {
                     resetAccountMemory()
+                    val account = host.obj("user")
+                    // Older single-user hosts may omit identity fields entirely.
+                    if (account.text("id").isNotBlank()) store.bindAccountIdentity(cleaned, session.username, account.text("id"),
+                        account["accountIdentityVersion"]?.jsonPrimitive?.intOrNull == 2)
                     store.signIn(cleaned, session)
                     mutable.update { ScreenState(endpoint = cleaned, username = session.username, signedIn = true,
                         theme = it.theme, accent = it.accent, motion = it.motion, loadCommandOutput = it.loadCommandOutput).withHostAccount(host) }

@@ -38,8 +38,11 @@ Sign in as **nulltogeek**, open the navigation drawer, and choose **Manage users
 - Use a user's menu to disable or enable their account, reset their password, or sign out their current devices.
 - From 0.9.2, choose **Delete user** and confirm to permanently remove an account,
   sign out all its devices, and stop its running work. Saved server files remain
-  on the deployment host. Deleted usernames stay reserved because older phones
-  scope cached data by username. Use Disable instead when access may be restored.
+  on the deployment host. From 0.9.4, you can create the username again as a
+  fresh account with a new identity and no access to the old account’s files.
+  Recreated accounts require 0.9.4 or later to sign in; the app clears the previous
+  identity’s cached history, drafts, attachments, favorites, and queue. Older
+  clients cannot recreate deleted names. Use Disable when access may be restored.
 - Disabling an account ends its sessions and blocks new sign-ins while retaining its chats and projects. Resetting a password also ends that user's existing sessions.
 
 The administrator cannot delete or disable the owner account or reset its password through the user-management menu. Change the administrator's own password in **Settings → Change password**. Give passwords created or reset for other people to them privately. Deletion appears only when the connected backend supports it.

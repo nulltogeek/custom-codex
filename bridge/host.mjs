@@ -131,7 +131,7 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
           if (passwordChange) result = await authentication.changePassword(req, input, req.socket.remoteAddress);
           else if (signup) {
             if (!authentication.signup) return reply(404, { error: 'Signup is unavailable on this host' });
-            result = await authentication.signup(input, req.socket.remoteAddress);
+            result = await authentication.signup(input, req.socket.remoteAddress, req.headers['x-codex-account-identity']);
           } else if (adminRoute) {
             if (!authentication.listUsers) return reply(404, { error: 'User management is unavailable on this host' });
             const match = /^\/v1\/admin\/users\/([A-Za-z0-9-]+)(\/revoke)?$/.exec(req.url);
@@ -141,7 +141,7 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
             else if (match && !match[2] && req.method === 'PATCH') result = await authentication.updateUser(req, match[1], input);
             else if (match && !match[2] && req.method === 'DELETE') result = await authentication.deleteUser(req, match[1]);
             else return reply(404, { error: 'Not found' });
-          } else result = await authentication.login(input, req.socket.remoteAddress);
+          } else result = await authentication.login(input, req.socket.remoteAddress, req.headers['x-codex-account-identity']);
           reply(200, result);
         } catch (error) {
           const status = error.status ?? 503;

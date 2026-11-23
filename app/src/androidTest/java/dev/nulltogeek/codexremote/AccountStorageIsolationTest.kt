@@ -62,4 +62,44 @@ class AccountStorageIsolationTest {
             assertEquals("owner data", store.cache(oldAccount).text("lateResult"))
         } finally { context.cleanup() }
     }
+
+    @Test fun recreatedUsernameClearsPreviousAccountDataButNormalLoginsPreserveIt() {
+        val context = IsolatedContext(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            val endpoint = "https://identity.example"; val username = "amirali"
+            context.getSharedPreferences("codex_remote", Context.MODE_PRIVATE).edit()
+                .putString("endpoint", endpoint).putString("username", username).commit()
+            val store = LocalStore(context)
+            store.saveCache(buildJsonObject { put("private", "old history") }); store.draft("same-id", "old draft")
+            store.favorites(endpoint, username, listOf(Chat("same-id", "Private", "", "")), setOf("project"))
+            store.notifiedTasks(endpoint, username, listOf("old-task"))
+            store.queue(endpoint, username, QueueSnapshot(messages = listOf(QueuedMessage("old-message", "same-id", "old queued text"))))
+            store.attachments("same-id", listOf(Attachment("old-file", "private.txt", 10, "text/plain", buildJsonObject {})))
+            store.chatOptions("same-id", "chat", "restricted")
+            store.bindAccountIdentity(endpoint, username, "old-id", false)
+            assertEquals("old draft", store.draft("same-id")); assertFalse(store.cache().isEmpty())
+            store.bindAccountIdentity(endpoint, username, "new-id", true)
+            assertEquals("", store.draft("same-id")); assertTrue(store.cache().isEmpty())
+            assertTrue(store.favorites(endpoint, username).first.isEmpty()); assertTrue(store.favorites(endpoint, username).second.isEmpty())
+            assertTrue(store.notifiedTasks(endpoint, username).isEmpty())
+            assertTrue(store.queue(endpoint, username).messages.isEmpty()); assertTrue(store.attachments("same-id").isEmpty())
+            assertEquals("codex", store.chatMode("same-id")); assertEquals("host", store.accessMode("same-id"))
+            store.draft("same-id", "new draft")
+            store.bindAccountIdentity(endpoint, username, "new-id", true)
+            assertEquals("new draft", store.draft("same-id"))
+        } finally { context.cleanup() }
+    }
+
+    @Test fun firstIdentityAwareLoginToRecreatedNameClearsUnboundLegacyCache() {
+        val context = IsolatedContext(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            val endpoint = "https://legacy.example"; val username = "amirali"
+            context.getSharedPreferences("codex_remote", Context.MODE_PRIVATE).edit()
+                .putString("endpoint", endpoint).putString("username", username).commit()
+            val store = LocalStore(context)
+            store.draft("same-id", "from old phone app"); store.saveCache(buildJsonObject { put("private", "old history") })
+            store.bindAccountIdentity(endpoint, username, "fresh-id", true)
+            assertTrue(store.cache().isEmpty()); assertEquals("", store.draft("same-id"))
+        } finally { context.cleanup() }
+    }
 }

@@ -176,7 +176,7 @@ class UserManagementUiTest {
                 compose.onNodeWithTag("managed-confirm-password").performScrollTo().performTextInput("long fixture password")
                 compose.onNodeWithTag("submit-managed-user").performClick()
                 compose.waitUntil(10000) { vm.state.value.userManagementMessage.contains("unavailable") }
-                compose.onNodeWithTag("user-password-error").performScrollTo().assertTextContains("deleted account", substring = true)
+                compose.onNodeWithTag("user-password-error").performScrollTo().assertTextContains("unavailable", substring = true)
                 capture("user-creation-error")
                 compose.onNodeWithTag("managed-username").assertTextContains("reserved.name")
                 compose.onNodeWithTag("managed-username").performScrollTo().performTextReplacement("fresh.member")

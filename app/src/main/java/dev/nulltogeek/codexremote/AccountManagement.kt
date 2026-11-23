@@ -141,7 +141,7 @@ import androidx.compose.ui.unit.dp
         dismissButton = { TextButton(onClick = { revoke = null }) { Text("Cancel") } }) }
     delete?.let { user -> AlertDialog(onDismissRequest = { delete = null },
         title = { Text("Delete ${user.username}?") },
-        text = { Text("Permanently remove this account, sign out all its devices, and stop its running work. Saved server files are retained. This username stays reserved and cannot be registered again.") },
+        text = { Text("Permanently remove this account, sign out all its devices, and stop its running work. Saved server files are retained. Reusing this username creates a fresh account with no access to the old files.") },
         confirmButton = { TextButton(onClick = { vm.deleteUser(user); delete = null },
             enabled = enabled && state.userDeletionAvailable, modifier = Modifier.testTag("confirm-delete-user")) {
             Text("Delete user", color = MaterialTheme.colorScheme.error)

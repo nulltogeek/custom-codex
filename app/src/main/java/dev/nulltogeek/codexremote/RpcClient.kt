@@ -50,12 +50,14 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
         val body = buildJsonObject { put("username", username); put("password", password) }
             .toString().toRequestBody("application/json".toMediaType())
         val session = http.newBuilder().followRedirects(false).followSslRedirects(false).build()
-            .newCall(Request.Builder().url(this@RpcClient.endpoint + if (signup) "/v1/signup" else "/v1/login").post(body).build()).awaitParsed {
+            .newCall(Request.Builder().url(this@RpcClient.endpoint + if (signup) "/v1/signup" else "/v1/login")
+                .header("X-Codex-Account-Identity", "2").post(body).build()).awaitParsed {
             if (!it.isSuccessful) throw IOException(when (it.code) {
                 400 -> if (signup) "Choose a username with 1–64 letters, numbers, dots, underscores or hyphens, and a password of at least 12 characters." else "Enter a username and password"
                 401 -> "Username or password was rejected"
                 403 -> if (signup) "New registrations are currently closed. Ask the administrator to create your account." else "This account is unavailable. Contact the administrator."
                 409 -> "That username is already taken. Choose another."
+                426 -> "Update Codex Remote to sign in to this recreated account."
                 429 -> "Too many login attempts. Try again later."
                 404, 405, 501 -> if (signup) "Update the server to enable account registration." else "Sign-in failed (HTTP ${it.code})"
                 else -> if (signup) "Could not create your account (HTTP ${it.code})" else "Sign-in failed (HTTP ${it.code})"
@@ -74,7 +76,7 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
         require(path == "/v1/admin/users" || path == "/v1/admin/settings" ||
             Regex("^/v1/admin/users/[A-Za-z0-9._-]+(?:/revoke)?$").matches(path)) { "Invalid account request" }
         require(method in listOf("GET", "POST", "PATCH", "DELETE")) { "Invalid account method" }
-        val request = Request.Builder().url(endpoint + path).header("Authorization", "Bearer $token")
+        val request = Request.Builder().url(endpoint + path).header("Authorization", "Bearer $token").header("X-Codex-Account-Identity", "2")
         if (method == "GET") request.get() else request.method(method, body.toString().toRequestBody("application/json".toMediaType()))
         http.newBuilder().followRedirects(false).followSslRedirects(false).build().newCall(request.build()).awaitParsed {
             if (it.code == 401) throw SessionExpiredException()
@@ -83,7 +85,7 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
                 403 -> "This action is available to the administrator. You cannot disable your own administrator account."
                 404 -> "The user is no longer available. Refresh the user list."
                 409 -> if (method == "POST" && path == "/v1/admin/users")
-                    "This username is unavailable. It may already exist or belong to a deleted account. Choose a different username."
+                    "This username is unavailable. It may already exist, or the server needs an update before a deleted username can be reused."
                     else "That change conflicts with the account state. Refresh the user list and try again."
                 429 -> "Too many account requests. Try again later."
                 else -> "Could not update users (HTTP ${it.code})"

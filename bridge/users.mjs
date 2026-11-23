@@ -9,7 +9,8 @@ const parameters = { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
 const digest = value => createHash('sha256').update(value).digest('hex');
 const failure = (status, message) => Object.assign(Error(message), { status });
 const normalize = value => typeof value === 'string' ? value.toLowerCase() : '';
-const publicUser = ({ id, username, role, disabled, createdAt }) => ({ id, username, role, disabled, createdAt });
+const publicUser = ({ id, username, role, disabled, createdAt, accountIdentityVersion }) => ({ id, username, role, disabled, createdAt,
+  ...(accountIdentityVersion === 2 ? { accountIdentityVersion: 2 } : {}) });
 const validPassword = value => typeof value === 'string' && value.length >= 12 && Buffer.byteLength(value) <= 1024;
 async function passwordAccount(username, password) {
   if (!/^[a-z0-9._-]{1,64}$/.test(username)) throw failure(400, 'Use 1–64 letters, numbers, dots, underscores or hyphens for your username');
@@ -38,7 +39,8 @@ export function createUserAuthentication({ accountFile, initialLoginFile, userna
     if ((!owner && !/^[0-9a-f-]{36}$/.test(stored.id)) || typeof stored.username !== 'string' ||
         !/^[A-Za-z0-9._-]{1,64}$/.test(stored.username) || names.has(normalize(stored.username)) || users.has(stored.id) ||
         stored.role !== (owner ? 'admin' : 'user') || typeof stored.disabled !== 'boolean' ||
-        !Number.isFinite(stored.createdAt) || (owner && (stored.username !== ownerAccount.username || stored.disabled)) ||
+        !Number.isFinite(stored.createdAt) || (stored.accountIdentityVersion !== undefined && stored.accountIdentityVersion !== 2) ||
+        (owner && (stored.username !== ownerAccount.username || stored.disabled)) ||
         (!owner && (!/^[a-f0-9]{32}$/.test(stored.account?.salt) || !/^[a-f0-9]{128}$/.test(stored.account?.passwordHash))))
       throw Error('Invalid user registry');
     const user = { ...publicUser(stored), account: owner ? ownerAccount : stored.account, revision: 0 };
@@ -112,7 +114,7 @@ export function createUserAuthentication({ accountFile, initialLoginFile, userna
     if (session.user.role !== 'admin') throw failure(403, 'Administrator access required');
     return session;
   }
-  async function create(body, source, isAdmin, req) {
+  async function create(body, source, isAdmin, req, clientIdentity) {
     expire();
     if (!isAdmin && !registry.signupEnabled) throw failure(403, 'Signup is currently closed. Contact the administrator.');
     const attempt = signupAttempts.get(source);
@@ -120,26 +122,38 @@ export function createUserAuthentication({ accountFile, initialLoginFile, userna
     signupAttempts.set(source, { count: (attempt?.count ?? 0) + 1, until: attempt?.until ?? now() + failureWindowMs });
     if (!body || Object.keys(body).some(key => !['username', 'password'].includes(key))) throw failure(400, 'Enter a username and password');
     const username = normalize(body.username);
-    if (names.has(username) || username === 'nulltogeek' || username === 'owner') throw failure(409, 'This username is unavailable');
+    const checkName = () => {
+      const deleted = registry.deletedUsernames.includes(username);
+      if ((names.has(username) && !deleted) || username === 'nulltogeek' || username === 'owner') throw failure(409, 'This username is unavailable');
+      if (deleted && clientIdentity !== '2') throw failure(409, 'Update Codex Remote to recreate this deleted username with a fresh account.');
+      return deleted;
+    };
+    checkName();
     if (users.size + creating >= maxUsers) throw failure(409, 'User limit reached. Contact the administrator.');
     creating++;
     try {
       const account = await newAccount(username, body.password);
       if (isAdmin) admin(req);
       else if (!registry.signupEnabled) throw failure(403, 'Signup is currently closed. Contact the administrator.');
-      if (names.has(username)) throw failure(409, 'This username is unavailable');
-      const user = { id: randomUUID(), username, role: 'user', disabled: false, createdAt: now(), account, revision: 0 };
-      persist(new Map([...users, [user.id, user]])); users.set(user.id, user); names.add(username);
+      const reused = checkName();
+      const user = { id: randomUUID(), username, role: 'user', disabled: false, createdAt: now(), account, revision: 0,
+        ...(reused ? { accountIdentityVersion: 2 } : {}) };
+      persist(new Map([...users, [user.id, user]]), registry.signupEnabled,
+        registry.deletedUsernames.filter(name => name !== username)); users.set(user.id, user); names.add(username);
       return isAdmin ? { user: publicUser(user) } : mint(user);
     } finally { creating--; }
   }
   return {
     authenticate, expire, canChangePassword: true, get signupEnabled() { return registry.signupEnabled; },
     user: id => users.has(id) ? publicUser(users.get(id)) : null,
-    login: async (body, source) => mint(await verify(body?.username, body?.password, source)),
-    signup: (body, source) => create(body, source, false),
+    login: async (body, source, clientIdentity) => {
+      const user = await verify(body?.username, body?.password, source);
+      if (user.accountIdentityVersion === 2 && clientIdentity !== '2') throw failure(426, 'Update Codex Remote before signing in to this recreated account.');
+      return mint(user);
+    },
+    signup: (body, source, clientIdentity) => create(body, source, false, undefined, clientIdentity),
     listUsers(req) { admin(req); return { users: [...users.values()].map(publicUser), signupEnabled: registry.signupEnabled }; },
-    async createUser(req, body, source) { admin(req); return create(body, source, true, req); },
+    async createUser(req, body, source) { admin(req); return create(body, source, true, req, req.headers['x-codex-account-identity']); },
     updateSettings(req, body) {
       admin(req);
       if (typeof body?.signupEnabled !== 'boolean' || Object.keys(body).some(key => key !== 'signupEnabled')) throw failure(400, 'Choose whether signup is enabled');
@@ -171,8 +185,8 @@ export function createUserAuthentication({ accountFile, initialLoginFile, userna
       if (id === 'owner') throw failure(400, 'The administrator account cannot be deleted.');
       if (changing.has(id)) throw failure(409, 'Account is being updated. Try again.');
       const remaining = new Map(users); remaining.delete(id);
-      // Reserve deleted names: older phones scope cached history/drafts by
-      // username, so a replacement account must never inherit that identity.
+      // Older phones cannot reuse names; identity-aware clients clear cached
+      // data when a new server user ID replaces the deleted identity.
       persist(remaining, registry.signupEnabled, [...registry.deletedUsernames, normalize(user.username)]);
       user.disabled = true; user.revision++;
       users.delete(id);

@@ -60,8 +60,9 @@ test('two users cannot read or mutate each other IDs, see events/approvals/repla
     codexHome: root, accountFile: join(root, 'account.json'), initialLoginFile: join(root, 'initial.json'), username: 'nulltogeek', port: 0,
     tenantOptions: { runtimeFactory(user, root) { const value = fakeRuntime(user, root); runtimes.set(user.id, value); return value; } } });
   const base = `http://127.0.0.1:${runtime.port}`;
-  const request = (path, session, method = 'GET', body) => fetch(base + path, { method,
-    headers: { ...(session ? { Authorization: `Bearer ${session.token}` } : {}), 'Content-Type': 'application/json' },
+  const request = (path, session, method = 'GET', body, identity) => fetch(base + path, { method,
+    headers: { ...(session ? { Authorization: `Bearer ${session.token}` } : {}), 'Content-Type': 'application/json',
+      ...(identity ? { 'X-Codex-Account-Identity': identity } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}) });
   let alice, bob;
   try {
@@ -111,6 +112,15 @@ test('two users cannot read or mutate each other IDs, see events/approvals/repla
     assert.equal((await request('/v1/host', a)).status, 401);
     assert.equal((await request('/v1/admin/users/' + a.user.id, owner, 'PATCH', { disabled: false })).status, 404);
     assert.equal((await request('/v1/signup', null, 'POST', { username: 'ALICE', password: 'a-new-password-long' })).status, 409);
+    const created = await request('/v1/admin/users', owner, 'POST', { username: 'alice', password: 'a-new-password-long' }, '2');
+    assert.equal(created.status, 200); const fresh = (await created.json()).user;
+    assert.notEqual(fresh.id, a.user.id); assert.equal(fresh.accountIdentityVersion, 2);
+    assert.ok((await (await request('/v1/admin/users', owner)).json()).users.some(user => user.id === fresh.id));
+    assert.equal((await request('/v1/login', null, 'POST', { username: 'alice', password: 'a-new-password-long' })).status, 426);
+    const freshLogin = await request('/v1/login', null, 'POST', { username: 'alice', password: 'a-new-password-long' }, '2');
+    assert.equal(freshLogin.status, 200); const newSession = await freshLogin.json();
+    assert.deepEqual((await (await request('/v1/history', newSession)).json()).data, []);
+    assert.equal((await request(path, newSession)).status, 404);
     assert.equal((await request('/v1/host', owner)).status, 200);
   } finally { alice?.peer.close(); bob?.peer.close(); await runtime.close(); }
 });

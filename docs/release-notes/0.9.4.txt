@@ -1,0 +1,3 @@
+Deleted usernames can be created again with a fresh account. The new account receives a new server identity and cannot access the deleted account's saved files or chats.
+
+Local history, drafts, attachments, favorites and queues are cleared when a username changes to a different server identity. Existing accounts keep their data. Recreated accounts require this updated app to sign in, preventing older clients from loading a previous account's cache.

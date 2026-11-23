@@ -145,3 +145,26 @@ test('deletion protects the owner, requires admin and rejects concurrent account
   await f.auth.deleteUser(owner, alice.user.id); await rejected;
   assert.ok(f.auth.authenticate(owner));
 });
+
+test('identity-aware clients recreate deleted names with a new ID and old clients cannot log in', async () => {
+  const f = fixture(), ownerToken = (await f.owner()).token, owner = req(ownerToken);
+  const alice = await signup(f.auth);
+  await f.auth.deleteUser(owner, alice.user.id);
+  const modern = { headers: { ...owner.headers, 'x-codex-account-identity': '2' } };
+  const replacement = await f.auth.createUser(modern, { username: 'ALICE', password: 'replacement-password-long' }, 'admin');
+  assert.notEqual(replacement.user.id, alice.user.id);
+  assert.equal(replacement.user.accountIdentityVersion, 2);
+  assert.equal(f.auth.authenticate(req(alice.token)), null);
+  assert.equal(f.auth.listUsers(owner).users.length, 2);
+  await assert.rejects(f.auth.login({ username: 'alice', password: 'replacement-password-long' }, 'legacy'), { status: 426 });
+  await assert.rejects(f.auth.login({ username: 'alice', password: 'a-user-test-password' }, 'old-password', '2'), { status: 401 });
+  const login = await f.auth.login({ username: 'alice', password: 'replacement-password-long' }, 'modern', '2');
+  assert.equal(login.user.id, replacement.user.id);
+  const restarted = createUserAuthentication(f.settings);
+  await assert.rejects(restarted.login({ username: 'alice', password: 'replacement-password-long' }, 'legacy'), { status: 426 });
+  assert.equal((await restarted.login({ username: 'alice', password: 'replacement-password-long' }, 'modern', '2')).user.id, replacement.user.id);
+  await f.auth.deleteUser(owner, replacement.user.id);
+  const signupAgain = await f.auth.signup({ username: 'alice', password: 'third-password-long' }, 'modern-signup', '2');
+  assert.notEqual(signupAgain.user.id, replacement.user.id);
+  assert.equal(signupAgain.user.accountIdentityVersion, 2);
+});

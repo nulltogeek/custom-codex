@@ -71,6 +71,25 @@ class LocalStore(private val context: Context) {
             putString("session", encrypted); putLong("sessionExpiresAt", session.expiresAt); remove("token") }
     }
     fun signOut() { prefs.edit { remove("token"); remove("session"); remove("sessionExpiresAt") } }
+    /** Reused usernames have a new server ID. Bind before saving the new session. */
+    @android.annotation.SuppressLint("UseKtx")
+    fun bindAccountIdentity(endpoint: String, username: String, userId: String, reused: Boolean) = synchronized(prefs) {
+        require(userId.isNotBlank()) { "The server did not provide an account identity." }
+        val account = accountStorageKey(endpoint, username)
+        val binding = "identity:$account"
+        val previous = prefs.getString(binding, null)
+        val editor = prefs.edit()
+        if ((previous != null && previous != userId) || (previous == null && reused)) {
+            prefs.all.keys.filter { it.startsWith("account:$account:") }.forEach(editor::remove)
+            val favorites = favoriteKey(endpoint, username)
+            listOf(favorites, "queue:$favorites", "notified:$favorites").forEach(editor::remove)
+            for (suffix in listOf("json", "tmp")) {
+                val file = java.io.File(context.filesDir, "history-$account.$suffix")
+                check(!file.exists() || file.delete()) { "Could not clear the deleted account's cache." }
+            }
+        }
+        check(editor.putString(binding, userId).commit()) { "Could not save the account identity." }
+    }
     fun theme(value: String) { prefs.edit { putString("theme", value) } }
     fun accent(value: String) { prefs.edit { putString("accent", value) } }
     fun taskNotifications(value: Boolean) { prefs.edit { putBoolean("taskNotifications", value) } }
