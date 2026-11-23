@@ -10,6 +10,15 @@ The administrator can list users, create users, disable/enable users, reset anot
 
 The private `users.json` registry sits beside the existing `account.json`. The existing owner hash stays in `account.json`, so the previous local password-recovery workflow remains available. Back up these private files and the user workspace directory using the same protection as other credentials.
 
+From 0.9.2, administrator deletion removes a non-owner account and its password
+hash from the active registry, revokes all sessions/WebSockets, and retires its
+runtime so in-flight requests cannot reopen it. The owner cannot be deleted.
+Private workspace/history/upload files are retained for host-side recovery;
+the operation does not erase server backups. `deletedUsernames` in the registry
+reserves deleted names, preventing a new account from inheriting older phones'
+username-scoped caches. Disabled accounts may also be deleted. Account changes
+already in progress must finish before deletion.
+
 ## Runtime and storage boundaries
 
 Every non-admin user gets a separate Codex home, project workspace, upload directory, backend process, event Broker, replay buffer, and approval queue. A user's HTTP requests and WebSocket are routed using the authenticated server-side identity. The phone cannot select another user's runtime.
@@ -52,10 +61,15 @@ The existing desktop-sharing/token bridge remains a historical compatibility pat
 | `GET /v1/admin/users` | `{users,signupEnabled}`; admin only |
 | `POST /v1/admin/users` | `{username,password}` → `{user}`; admin only |
 | `PATCH /v1/admin/users/:id` | `{disabled}` and/or `{password}` → `{user}`; admin only |
+| `DELETE /v1/admin/users/:id` | `{}` → `{ok:true}`; admin only; owner protected |
 | `POST /v1/admin/users/:id/revoke` | `{}` → `{ok:true}`; admin only |
 | `PATCH /v1/admin/settings` | `{signupEnabled}`; admin only |
 
 Passwords are sent only in HTTPS JSON request bodies. Never place credentials in URLs, shell arguments, source, or logs.
+
+`GET /v1/host` advertises `capabilities.userDeletion` only to the administrator
+on a backend supporting this operation. Older clients can continue using the
+existing administration routes.
 
 ## Verification
 

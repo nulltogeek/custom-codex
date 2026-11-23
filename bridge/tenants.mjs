@@ -29,7 +29,7 @@ export function createTenantPool({ directory: root, ownerHome, backendPath, back
   dockerPath = process.env.CODEX_TENANT_DOCKER ?? '/usr/bin/docker',
   image = process.env.CODEX_TENANT_IMAGE ?? 'python:3.12.14-slim-bookworm', maxRuntimes = 8, idleLifetimeMs = 600000,
   providerSettings, runtimeFactory }) {
-  const entries = new Map(); let gateway, gatewayStarting, closed = false;
+  const entries = new Map(), retired = new Set(); let gateway, gatewayStarting, closed = false;
   root = resolve(root);
   async function provider() {
     if (gateway) return gateway;
@@ -100,7 +100,7 @@ export function createTenantPool({ directory: root, ownerHome, backendPath, back
     (entry.runtime.broker.activeTurns?.size ?? 0) === 0;
   const api = {
     get(user) {
-      if (closed || user.disabled || !/^[0-9a-f-]{36}$/.test(user.id)) throw failure('Private workspace unavailable');
+      if (closed || retired.has(user.id) || user.disabled || !/^[0-9a-f-]{36}$/.test(user.id)) throw failure('Private workspace unavailable');
       const previous = entries.get(user.id);
       if (previous) { previous.lastUsed = Date.now(); return previous.stopping ? previous.stopping.then(() => this.get(user)) : previous.promise; }
       if (entries.size >= maxRuntimes) {
@@ -113,6 +113,7 @@ export function createTenantPool({ directory: root, ownerHome, backendPath, back
         .catch(error => { if (!entry.stopping && entries.get(user.id) === entry) entries.delete(user.id); throw error; });
       entries.set(user.id, entry); return entry.promise;
     },
+    retire(id) { retired.add(id); return this.stop(id); },
     stop(id) {
       const entry = entries.get(id);
       if (!entry) return Promise.resolve();

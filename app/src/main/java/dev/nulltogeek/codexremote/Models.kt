@@ -40,6 +40,7 @@ fun Attachment.toJson() = buildJsonObject { put("id", id); put("name", name); pu
 data class ScreenState(
     val endpoint: String = "", val username: String = "", val signedIn: Boolean = false, val connection: String = "Offline",
     val accountId: String = "", val accountRole: String = "user", val userManagementAvailable: Boolean = false,
+    val userDeletionAvailable: Boolean = false,
     val registrationAvailable: Boolean = true, val adminUsers: List<ManagedUser> = emptyList(),
     val availableAccessModes: List<String> = listOf("host", "ask", "read-only", "full"), val workspaceRoot: String = "",
     val usersLoading: Boolean = false, val userMutationPending: Boolean = false, val signupEnabled: Boolean = true,

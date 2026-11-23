@@ -133,6 +133,18 @@ class RemoteUiTest {
         compose.onNodeWithTag("answer-question:ask").assertDoesNotExist()
         compose.onNodeWithText("Answer sent").assertIsDisplayed()
     }
+    @Test fun blockingCodexQuestionOpensCustomTextInputAboveTheConversation() {
+        val request = PendingInput("blocking-question", "item/tool/requestUserInput", WireJson.parseToJsonElement(
+            """{"threadId":"chat","turnId":"t","questions":[{"id":"format","question":"Which format?","options":[{"label":"PNG"},{"label":"JPEG"}]}]}""").jsonObject)
+        val state = mutableStateOf(sample().copy(selectedChat = Chat("chat", "Questions", "", "", "active"),
+            activeTurnId = "t", pending = listOf(request)))
+        render(state, narrow = true)
+        compose.onNodeWithTag("pending-input:blocking-question").performClick()
+        compose.onNodeWithTag("submit-question").assertIsNotEnabled()
+        compose.onNodeWithTag("question-custom:format").performScrollTo().performClick()
+        compose.onNodeWithTag("question-answer:format").performScrollTo().performTextInput("SVG with transparent background")
+        compose.onNodeWithTag("submit-question").assertIsEnabled()
+    }
     private fun sample() = ScreenState(signedIn = true, username = "owner", connection = "Connected", host = "Linux workstation", theme = "dark",
         projects = (1..15).map { Project("p$it", "Project $it", listOf("/workspace/project-$it")) },
         chats = (1..100).map { Chat("c$it", "Build feature $it", "Review code and verify the Android changes", "/workspace/project-1", if (it == 1) "active" else "idle") })

@@ -72,7 +72,9 @@ test('two users cannot read or mutate each other IDs, see events/approvals/repla
     assert.equal((await request('/v1/admin/users')).status, 401);
     assert.equal((await (await request('/v1/admin/users', owner)).json()).users.length, 3);
     assert.equal((await (await request('/v1/host', owner)).json()).capabilities.userManagement, true);
+    assert.equal((await (await request('/v1/host', owner)).json()).capabilities.userDeletion, true);
     assert.equal((await (await request('/v1/host', a)).json()).capabilities.userManagement, false);
+    assert.equal((await (await request('/v1/host', a)).json()).capabilities.userDeletion, false);
     alice = await connect(runtime.port, a.token); bob = await connect(runtime.port, b.token);
     const at = (await alice.call('thread/start')).thread, bt = (await bob.call('thread/start')).thread;
     await assert.rejects(alice.call('thread/read', { threadId: bt.id }), /not found/);
@@ -99,6 +101,17 @@ test('two users cannot read or mutate each other IDs, see events/approvals/repla
     const response = await request('/v1/admin/users/' + b.user.id, owner, 'PATCH', { disabled: true }); assert.equal(response.status, 200);
     assert.equal((await request('/v1/host', b)).status, 401);
     assert.equal((await request('/v1/host', a)).status, 200);
+    assert.equal((await request('/v1/admin/users/' + a.user.id, null, 'DELETE', {})).status, 401);
+    assert.equal((await request('/v1/admin/users/' + a.user.id, a, 'DELETE', {})).status, 403);
+    assert.equal((await request('/v1/admin/users/owner', owner, 'DELETE', {})).status, 400);
+    const closed = once(alice.peer, 'close');
+    assert.equal((await request('/v1/admin/users/' + a.user.id, owner, 'DELETE', {})).status, 200);
+    await closed;
+    assert.equal(runtime.pool.activeCount, 0);
+    assert.equal((await request('/v1/host', a)).status, 401);
+    assert.equal((await request('/v1/admin/users/' + a.user.id, owner, 'PATCH', { disabled: false })).status, 404);
+    assert.equal((await request('/v1/signup', null, 'POST', { username: 'ALICE', password: 'a-new-password-long' })).status, 409);
+    assert.equal((await request('/v1/host', owner)).status, 200);
   } finally { alice?.peer.close(); bob?.peer.close(); await runtime.close(); }
 });
 
@@ -119,6 +132,9 @@ test('tenant stop/start serialize and idle reclamation never stops a running tur
     assert.throws(() => pool.get(b), /busy/); assert.equal(closes, 1);
     active.broker.activeTurns.clear(); await pool.get(b);
     assert.equal(starts, 3); assert.equal(closes, 2); assert.equal(pool.activeCount, 1);
+    await pool.retire(b.id);
+    assert.throws(() => pool.get(b), /unavailable/);
+    assert.equal(starts, 3); assert.equal(closes, 3);
   } finally { await pool.close(); }
 });
 

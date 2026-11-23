@@ -112,7 +112,7 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
         try { return reply(200, authentication.listUsers?.(req) ?? { users: [], signupEnabled: false }); }
         catch (error) { return reply(error.status ?? 503, { error: error.status ? error.message : 'Account service temporarily unavailable' }); }
       }
-      if (!(req.method === 'POST' || (adminRoute && req.method === 'PATCH'))) return reply(405, { error: 'Method not allowed' });
+      if (!(req.method === 'POST' || (adminRoute && ['PATCH', 'DELETE'].includes(req.method)))) return reply(405, { error: 'Method not allowed' });
       if ((req.headers['content-type'] ?? '').split(';')[0].trim() !== 'application/json') return reply(415, { error: 'Use application/json' });
       let size = 0, chunks = [];
       req.setTimeout(15000, () => req.destroy());
@@ -139,6 +139,7 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
             else if (req.url === '/v1/admin/settings' && req.method === 'PATCH') result = authentication.updateSettings(req, input);
             else if (match?.[2] && req.method === 'POST') result = authentication.revokeSessions(req, match[1]);
             else if (match && !match[2] && req.method === 'PATCH') result = await authentication.updateUser(req, match[1], input);
+            else if (match && !match[2] && req.method === 'DELETE') result = await authentication.deleteUser(req, match[1]);
             else return reply(404, { error: 'Not found' });
           } else result = await authentication.login(input, req.socket.remoteAddress);
           reply(200, result);
@@ -181,7 +182,7 @@ export function createHost({ broker, token, authentication, port = 8787, bindAdd
     }
     if (req.url === '/v1/host') return reply(200, { name: hostname(), backendPid, backendVersion,
       user: session?.user, bridgeVersion: '2', runtimeMode, codexHome, configFile: join(codexHome, 'config.toml'), ready: broker.ready, epoch: broker.epoch,
-      capabilities: { userManagement: session?.user?.role === 'admin', registration: Boolean(authentication?.signupEnabled), workspaceRoot: context.workspaceRoot ?? null, passwordChange: Boolean(authentication?.canChangePassword), attachments: true, appUpdates: true, maxUploadBytes: 20 * 1024 * 1024, mobileModes: ['codex', 'chat'], accessModes: context.workspaceRoot ? ['host', 'ask', 'read-only'] : ['host', 'ask', 'read-only', 'full'] },
+      capabilities: { userManagement: session?.user?.role === 'admin', userDeletion: session?.user?.role === 'admin' && typeof authentication?.deleteUser === 'function', registration: Boolean(authentication?.signupEnabled), workspaceRoot: context.workspaceRoot ?? null, passwordChange: Boolean(authentication?.canChangePassword), attachments: true, appUpdates: true, maxUploadBytes: 20 * 1024 * 1024, mobileModes: ['codex', 'chat'], accessModes: context.workspaceRoot ? ['host', 'ask', 'read-only'] : ['host', 'ask', 'read-only', 'full'] },
       initialization: { resultReceived: Boolean(broker.initResult), notificationReceived: broker.desktopNotificationSeen, errorCode: broker.initializationError } });
     if (req.url === '/v1/projects') {
       try { return reply(200, context.readProjects ? await context.readProjects() : readProjects(codexHome, liveProjects())); }

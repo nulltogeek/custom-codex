@@ -18,16 +18,30 @@ task_stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 task_stage="/home/nulltogeek/.local/state/custom-codex-deploy/$task_stamp"
 ssh "$task_host" "umask 077; mkdir -p '$task_stage/payload'"
 rsync -az bridge node_modules package.json package-lock.json "$task_host:$task_stage/payload/"
-ssh "$task_host" bash -s -- "$task_stage" <<'REMOTE'
+# A supplied current login stays on this machine. The check URL may be an SSH
+# tunnel; no password or session is copied into the deployment payload.
+task_idle_at=0
+if [[ -n "${CODEX_INITIAL_LOGIN_FILE:-}" ]]; then
+  node scripts/verify-runtime-idle.mjs "${CODEX_DEPLOY_CHECK_URL:-https://codex.geeksun.ir}"
+  task_idle_at="$(date +%s)"
+fi
+ssh "$task_host" bash -s -- "$task_stage" "$task_idle_at" <<'REMOTE'
 set -euo pipefail
 task_stage="$1"
+task_idle_at="$2"
 task_root=/home/nulltogeek/Desktop/nulltogeek/custom-codex
 task_node=/home/nulltogeek/.local/lib/custom-codex/runtime/bin/node
 exec 9>/home/nulltogeek/.local/state/custom-codex-deploy/deploy.lock
 flock -n 9 || { echo 'Another deployment is running.' >&2; exit 1; }
 cd "$task_root"
 # Fails closed if saved login credentials are missing/obsolete or work is active.
-"$task_node" scripts/verify-runtime-idle.mjs http://192.168.1.7:8787
+if [[ "$task_idle_at" == 0 ]]; then
+  "$task_node" scripts/verify-runtime-idle.mjs http://192.168.1.7:8787
+else
+  [[ "$task_idle_at" =~ ^[0-9]+$ ]] || exit 1
+  task_idle_age=$(( $(date +%s) - task_idle_at ))
+  (( task_idle_age >= 0 && task_idle_age <= 30 )) || { echo 'Local authenticated idle check expired; retry deployment.' >&2; exit 1; }
+fi
 # The legacy idle probe covers the administrator runtime only. Refuse activation
 # while separate user runtimes exist, even if the administrator is idle.
 command -v docker >/dev/null || { echo 'Cannot check user runtime containers.' >&2; exit 1; }

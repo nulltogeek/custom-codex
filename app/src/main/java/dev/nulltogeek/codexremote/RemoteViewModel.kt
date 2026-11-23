@@ -243,6 +243,7 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
         host = host.text("name", "Your computer"), accountId = host.obj("user").text("id"),
         accountRole = host.obj("user").text("role", "user"),
         userManagementAvailable = host.obj("capabilities")["userManagement"]?.jsonPrimitive?.booleanOrNull == true,
+        userDeletionAvailable = host.obj("capabilities")["userDeletion"]?.jsonPrimitive?.booleanOrNull == true,
         registrationAvailable = host.obj("capabilities")["registration"]?.jsonPrimitive?.booleanOrNull != false,
         availableAccessModes = host.obj("capabilities").array("accessModes").mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
             .ifEmpty { listOf("host", "ask", "read-only", "full") },
@@ -286,6 +287,13 @@ class RemoteViewModel(application: Application) : AndroidViewModel(application) 
     fun revokeUserSessions(user: ManagedUser) = manageUsers("User sessions signed out.") {
         require(user.id != mutable.value.accountId) { "Use Sign out to end your own session." }
         rpc.accountRequest("/v1/admin/users/${user.id}/revoke", "POST")
+    }
+    fun deleteUser(user: ManagedUser) = manageUsers("User deleted and signed out. Saved server files are retained.") {
+        require(mutable.value.userDeletionAvailable) { "Update the server to enable user deletion." }
+        require(user.id.isNotBlank() && user.id != "owner" && user.id != mutable.value.accountId && user.role != "admin") {
+            "The administrator account cannot be deleted."
+        }
+        rpc.accountRequest("/v1/admin/users/${user.id}", "DELETE")
     }
     fun setSignupEnabled(enabled: Boolean) = manageUsers(if (enabled) "New registrations are open." else "New registrations are closed.") {
         rpc.accountRequest("/v1/admin/settings", "PATCH", buildJsonObject { put("signupEnabled", enabled) })

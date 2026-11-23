@@ -128,7 +128,7 @@ export async function startStandalone({
   }
   let pool, host;
   const authentication = createUserAuthentication({ accountFile, initialLoginFile, username, usersFile,
-    onUserDisabled: id => { void pool?.stop(id); } });
+    onUserDisabled: id => { void pool?.stop(id); }, onUserDeleted: id => pool?.retire(id) });
   const runtime = await startRuntime({ backendPath, backendArgs, codexHome, cwd, backendVersion, startupTimeoutMs,
     onStopped: () => { host?.close(); void pool?.close(); } });
   pool = createTenantPool({ directory: tenantDirectory, ownerHome: codexHome, backendPath, backendVersion,

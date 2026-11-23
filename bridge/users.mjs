@@ -21,7 +21,7 @@ async function passwordAccount(username, password) {
 /** Password accounts are private host data. The legacy owner hash remains in account.json. */
 export function createUserAuthentication({ accountFile, initialLoginFile, username, usersFile,
   now = Date.now, sessionLifetimeMs = 30 * 86400000, failureWindowMs = 600000, maxFailures = 10,
-  maxSessions = 32, maxUsers = 100, onUserDisabled = () => {} }) {
+  maxSessions = 32, maxUsers = 100, onUserDisabled = () => {}, onUserDeleted = async () => {} }) {
   const ownerAccount = loginAccount(accountFile, initialLoginFile, username);
   let registry;
   if (existsSync(usersFile)) registry = privateJson(usersFile);
@@ -29,7 +29,10 @@ export function createUserAuthentication({ accountFile, initialLoginFile, userna
     role: 'admin', disabled: false, createdAt: now() }] };
   if (registry.version !== 1 || typeof registry.signupEnabled !== 'boolean' || !Array.isArray(registry.users) ||
       !registry.users.length || registry.users.length > maxUsers) throw Error('Invalid user registry');
-  const users = new Map(), names = new Set();
+  registry.deletedUsernames ??= [];
+  if (!Array.isArray(registry.deletedUsernames) || registry.deletedUsernames.some(name => typeof name !== 'string' || !/^[a-z0-9._-]{1,64}$/.test(name)) ||
+      new Set(registry.deletedUsernames).size !== registry.deletedUsernames.length) throw Error('Invalid deleted username registry');
+  const users = new Map(), names = new Set(registry.deletedUsernames);
   for (const stored of registry.users) {
     const owner = stored.id === 'owner';
     if ((!owner && !/^[0-9a-f-]{36}$/.test(stored.id)) || typeof stored.username !== 'string' ||
@@ -42,13 +45,13 @@ export function createUserAuthentication({ accountFile, initialLoginFile, userna
     users.set(user.id, user); names.add(normalize(user.username));
   }
   if (!users.has('owner')) throw Error('Owner account missing from user registry');
-  function persist(nextUsers = users, signupEnabled = registry.signupEnabled) {
-    const data = { version: 1, signupEnabled, users: [...nextUsers.values()].map(user => ({ ...publicUser(user),
+  function persist(nextUsers = users, signupEnabled = registry.signupEnabled, deletedUsernames = registry.deletedUsernames) {
+    const data = { version: 1, signupEnabled, deletedUsernames, users: [...nextUsers.values()].map(user => ({ ...publicUser(user),
       ...(user.id === 'owner' ? {} : { account: user.account }) })) };
     mkdirSync(dirname(usersFile), { recursive: true, mode: 0o700 });
     const temporary = usersFile + '.new-' + randomBytes(12).toString('hex');
     writeFileSync(temporary, JSON.stringify(data, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
-    renameSync(temporary, usersFile); registry.signupEnabled = signupEnabled;
+    renameSync(temporary, usersFile); registry.signupEnabled = signupEnabled; registry.deletedUsernames = deletedUsernames;
   }
   if (!existsSync(usersFile)) persist();
   const sessions = new Map(), failures = new Map(), sourceFailures = new Map(), signupAttempts = new Map(), changing = new Set();
@@ -160,6 +163,22 @@ export function createUserAuthentication({ accountFile, initialLoginFile, userna
         if (body.disabled === true) onUserDisabled(id);
         return { user: publicUser(user) };
       } finally { changing.delete(id); }
+    },
+    async deleteUser(req, id) {
+      admin(req);
+      const user = users.get(id);
+      if (!user) throw failure(404, 'User not found');
+      if (id === 'owner') throw failure(400, 'The administrator account cannot be deleted.');
+      if (changing.has(id)) throw failure(409, 'Account is being updated. Try again.');
+      const remaining = new Map(users); remaining.delete(id);
+      // Reserve deleted names: older phones scope cached history/drafts by
+      // username, so a replacement account must never inherit that identity.
+      persist(remaining, registry.signupEnabled, [...registry.deletedUsernames, normalize(user.username)]);
+      user.disabled = true; user.revision++;
+      users.delete(id);
+      revokeUser(id);
+      await onUserDeleted(id);
+      return { ok: true };
     },
     revokeSessions(req, id) { admin(req); if (!users.has(id)) throw failure(404, 'User not found'); revokeUser(id); return { ok: true }; },
     async changePassword(req, body, source) {

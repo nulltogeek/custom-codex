@@ -264,6 +264,20 @@ test('turn completion clears unanswered requests', () => {
   h.broker.receive({ method: 'turn/completed', params: { threadId: 'a', turn: { id: 't' } } });
   assert.equal(h.broker.snapshot().pendingRequests.length, 0);
 });
+test('blocking Codex questions accept custom text and return it to the waiting request', () => {
+  const h = harness(); h.initialize();
+  h.broker.receive({ id: 'ask-text', method: 'item/tool/requestUserInput', params: {
+    threadId: 'chat', turnId: 'turn', questions: [
+      { id: 'format', question: 'Which format?', options: [{ label: 'PNG' }, { label: 'JPEG' }] },
+      { id: 'details', question: 'Any details?' },
+    ],
+  } });
+  const request = h.broker.snapshot().pendingRequests[0];
+  const result = { answers: { format: { answers: ['SVG instead'] }, details: { answers: ['Use a transparent background.'] } } };
+  h.broker.accept('phone', { id: 41, method: 'bridge/respond', params: { requestId: request.requestId, result } });
+  assert.deepEqual(h.upstream.at(-1), { id: 'ask-text', result });
+  assert.equal(h.broker.snapshot().pendingRequests.length, 0);
+});
 test('async question notifications reach phones and replies steer without a pending approval', () => {
   const h = harness(); h.initialize();
   const item = { id: 'question', type: 'agentMessage', phase: 'commentary', delivery: 'async', text: '',

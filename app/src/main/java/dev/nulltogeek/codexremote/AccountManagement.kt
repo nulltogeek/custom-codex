@@ -76,6 +76,7 @@ import androidx.compose.ui.unit.dp
     var reset by remember { mutableStateOf<ManagedUser?>(null) }
     var disable by remember { mutableStateOf<ManagedUser?>(null) }
     var revoke by remember { mutableStateOf<ManagedUser?>(null) }
+    var delete by remember { mutableStateOf<ManagedUser?>(null) }
     LaunchedEffect(state.accountId, state.userManagementAvailable) { if (state.userManagementAvailable) vm.refreshUsers() }
     if (!state.userManagementAvailable) {
         Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { Text("User management is available to the administrator.") }
@@ -118,7 +119,9 @@ import androidx.compose.ui.unit.dp
         items(state.adminUsers, key = { it.id }) { user ->
             ManagedUserRow(user, user.id == state.accountId, enabled,
                 changeEnabled = { if (user.disabled) vm.updateUser(user, disabled = false) else disable = user },
-                resetPassword = { reset = user }, revoke = { revoke = user })
+                resetPassword = { reset = user }, revoke = { revoke = user },
+                canDelete = state.userDeletionAvailable && user.id != "owner" && user.role != "admin",
+                delete = { delete = user })
         }
         if (state.adminUsers.isEmpty() && !state.usersLoading) item { Text("No users loaded. Refresh to try again.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
@@ -136,10 +139,18 @@ import androidx.compose.ui.unit.dp
         title = { Text("Sign out ${user.username}?") }, text = { Text("All of this user's current device sessions will end. They can sign in again with their password.") },
         confirmButton = { TextButton(onClick = { vm.revokeUserSessions(user); revoke = null }, enabled = enabled) { Text("Sign out devices") } },
         dismissButton = { TextButton(onClick = { revoke = null }) { Text("Cancel") } }) }
+    delete?.let { user -> AlertDialog(onDismissRequest = { delete = null },
+        title = { Text("Delete ${user.username}?") },
+        text = { Text("Permanently remove this account, sign out all its devices, and stop its running work. Saved server files are retained. This username stays reserved and cannot be registered again.") },
+        confirmButton = { TextButton(onClick = { vm.deleteUser(user); delete = null },
+            enabled = enabled && state.userDeletionAvailable, modifier = Modifier.testTag("confirm-delete-user")) {
+            Text("Delete user", color = MaterialTheme.colorScheme.error)
+        } },
+        dismissButton = { TextButton(onClick = { delete = null }) { Text("Cancel") } }) }
 }
 
 @Composable private fun ManagedUserRow(user: ManagedUser, self: Boolean, enabled: Boolean,
-    changeEnabled: () -> Unit, resetPassword: () -> Unit, revoke: () -> Unit) {
+    changeEnabled: () -> Unit, resetPassword: () -> Unit, revoke: () -> Unit, canDelete: Boolean, delete: () -> Unit) {
     var menu by remember(user.id) { mutableStateOf(false) }
     Surface(color = MaterialTheme.colorScheme.surface, shape = MaterialTheme.shapes.large, modifier = Modifier.testTag("managed-user:${user.id}")) {
         Row(Modifier.fillMaxWidth().padding(start = 12.dp, top = 10.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -160,6 +171,9 @@ import androidx.compose.ui.unit.dp
                         onClick = { menu = false; changeEnabled() })
                     if (!self) DropdownMenuItem(text = { Text("Reset password") }, onClick = { menu = false; resetPassword() })
                     if (!self) DropdownMenuItem(text = { Text("Sign out devices") }, onClick = { menu = false; revoke() })
+                    if (!self && canDelete) DropdownMenuItem(text = { Text("Delete user", color = MaterialTheme.colorScheme.error) },
+                        leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                        modifier = Modifier.testTag("delete-user:${user.id}"), onClick = { menu = false; delete() })
                     if (self) DropdownMenuItem(text = { Text("Change your password in Settings") }, onClick = { menu = false }, enabled = false)
                 }
             }

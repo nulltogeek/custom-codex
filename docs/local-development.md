@@ -42,6 +42,22 @@ cannot establish idleness. A restart requires phone users to sign in again.
 The health probe confirms the HTTP listener; authenticated/model checks are
 still required after a substantive backend change.
 
+If the server's saved login is missing or obsolete, supply a current private
+0600 JSON login file on this machine. `CODEX_INITIAL_LOGIN_FILE` makes the
+helper run its authenticated idle check locally after staging and immediately
+before activation. `CODEX_DEPLOY_CHECK_URL` defaults to the HTTPS endpoint; it
+can point to a local SSH tunnel forwarding to the server's port 8787. For example:
+
+```bash
+CODEX_INITIAL_LOGIN_FILE=/path/to/private-login.json \
+CODEX_DEPLOY_CHECK_URL=http://127.0.0.1:18787 \
+./scripts/deploy-backend.sh --apply
+```
+
+Credentials remain local and are excluded from the deployment payload. The
+target refuses a local idle check older than 30 seconds and still refuses
+activation while user runtime containers exist.
+
 This deploy helper transfers only `bridge/`, `node_modules/`, and the two
 package manifests. It does not install services, replace the private remote
 Node/Codex runtime, or change accounts, uploads, Codex history,
@@ -67,8 +83,8 @@ After a local build has staged the update files, publish the live feed with:
 This validates APK signatures and metadata locally, checks uploaded bytes,
 backs up the prior manifests, and switches the live feeds without restarting
 the backend. It preserves old APKs and refuses changed or older versions and
-subsequent signing-key changes. The live feeds now advertise 0.9.1/code 35;
-0.9.0 installations can update in place. See [in-app updates](in-app-updates.md).
+subsequent signing-key changes. The live feeds now advertise 0.9.2/code 36;
+0.9.0/0.9.1 installations can update in place. See [in-app updates](in-app-updates.md).
 
 At import time, source was 0.8.0/code 33 but production update manifests were
 0.7.24/code 32. The 0.8.0 release notes explicitly report a signing-key change

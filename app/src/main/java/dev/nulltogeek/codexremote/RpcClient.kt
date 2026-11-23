@@ -73,7 +73,7 @@ class RpcClient(private val connectTimeoutMillis: Long = 20000, private val requ
     suspend fun accountRequest(path: String, method: String, body: JsonObject = buildJsonObject {}): JsonObject = withContext(Dispatchers.IO) {
         require(path == "/v1/admin/users" || path == "/v1/admin/settings" ||
             Regex("^/v1/admin/users/[A-Za-z0-9._-]+(?:/revoke)?$").matches(path)) { "Invalid account request" }
-        require(method in listOf("GET", "POST", "PATCH")) { "Invalid account method" }
+        require(method in listOf("GET", "POST", "PATCH", "DELETE")) { "Invalid account method" }
         val request = Request.Builder().url(endpoint + path).header("Authorization", "Bearer $token")
         if (method == "GET") request.get() else request.method(method, body.toString().toRequestBody("application/json".toMediaType()))
         http.newBuilder().followRedirects(false).followSslRedirects(false).build().newCall(request.build()).awaitParsed {

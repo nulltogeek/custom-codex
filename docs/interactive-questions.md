@@ -20,6 +20,18 @@ Pending requests appear individually in the library and above the conversation,
 so scrolling into earlier messages does not hide a blocking input request.
 Secret fields use password input and are omitted from saved answer state.
 
+## Verified with the 0.9.2 build
+
+Typed answers were already implemented; no new question-entry feature was
+needed. Android 11 emulator checks passed for choices plus custom text,
+questions without options, answer retention after connection loss/failure,
+asynchronous question cards, and opening a blocking question above the chat.
+Android unit tests cover the exact blocking answer payload, steering a running
+turn, starting after completion, and rejecting stale or already-answered
+questions. A broker test verifies custom typed text reaches the original
+waiting Codex request. This uses protocol fixtures; a physical-phone,
+model-triggered question is not claimed by these tests.
+
 A failed submission retains the answers in the open dialog and displays its error.
 Disconnected submissions are disabled. If asynchronous delivery cannot be
 confirmed, refresh and inspect chat history before trying again; the app never

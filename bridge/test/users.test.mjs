@@ -107,3 +107,41 @@ test('successful attacker logins cannot reset the owner target failure budget', 
   }
   await assert.rejects(f.auth.login({ username: 'nulltogeek', password: f.credentials.password }, 'same-ip'), { status: 429 });
 });
+
+test('admin deletion revokes all sessions, persists removal and reserves the old username', async () => {
+  const stopped = [], f = fixture({ onUserDeleted: async id => stopped.push(id) });
+  const owner = req((await f.owner()).token), alice = await signup(f.auth), bob = await signup(f.auth, 'bob');
+  const otherSession = await f.auth.login({ username: 'alice', password: 'a-user-test-password' }, 'another-device');
+  let closed = 0;
+  f.auth.track(req(alice.token), () => closed++); f.auth.track(req(otherSession.token), () => closed++);
+  const before = readFileSync(f.settings.accountFile);
+  assert.deepEqual(await f.auth.deleteUser(owner, alice.user.id), { ok: true });
+  assert.equal(closed, 2); assert.deepEqual(stopped, [alice.user.id]);
+  assert.equal(f.auth.user(alice.user.id), null);
+  assert.equal(f.auth.authenticate(req(alice.token)), null); assert.equal(f.auth.authenticate(req(otherSession.token)), null);
+  assert.ok(f.auth.authenticate(req(bob.token))); assert.ok(f.auth.authenticate(owner));
+  assert.deepEqual(f.auth.listUsers(owner).users.map(user => user.id), ['owner', bob.user.id]);
+  const restarted = createUserAuthentication(f.settings);
+  await assert.rejects(restarted.login({ username: 'alice', password: 'a-user-test-password' }, 'deleted'), { status: 401 });
+  assert.equal(restarted.user(alice.user.id), null);
+  await assert.rejects(signup(f.auth, 'ALICE', 'replacement'), { status: 409 });
+  await assert.rejects(signup(restarted, 'ALICE', 'replacement'), { status: 409 });
+  await assert.rejects(f.auth.createUser(owner, { username: 'alice', password: 'a-new-password-long' }, 'admin-create'), { status: 409 });
+  assert.deepEqual(readFileSync(f.settings.accountFile), before);
+  await assert.rejects(f.auth.deleteUser(owner, alice.user.id), { status: 404 });
+});
+
+test('deletion protects the owner, requires admin and rejects concurrent account changes', async () => {
+  const f = fixture(), owner = req((await f.owner()).token), alice = await signup(f.auth);
+  await assert.rejects(f.auth.deleteUser(req('invalid'), alice.user.id), { status: 401 });
+  await assert.rejects(f.auth.deleteUser(req(alice.token), alice.user.id), { status: 403 });
+  await assert.rejects(f.auth.deleteUser(owner, 'owner'), { status: 400 });
+  const reset = f.auth.updateUser(owner, alice.user.id, { password: 'a-reset-password-long' });
+  await assert.rejects(f.auth.deleteUser(owner, alice.user.id), { status: 409 });
+  await reset;
+  // A password verification started before deletion cannot mint a new session.
+  const login = f.auth.login({ username: 'alice', password: 'a-reset-password-long' }, 'racing-login');
+  const rejected = assert.rejects(login, { status: 409 });
+  await f.auth.deleteUser(owner, alice.user.id); await rejected;
+  assert.ok(f.auth.authenticate(owner));
+});
